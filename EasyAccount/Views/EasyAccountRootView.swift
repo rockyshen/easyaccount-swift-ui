@@ -3,59 +3,87 @@ import SwiftUI
 struct EasyAccountRootView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
 
+    private let menuWidthRatio: CGFloat = 0.78
+
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Group {
-                switch vm.stage {
-                case .bootstrapping:
-                    CenterStatusView(text: "正在恢复登录状态…")
-                case .login:
-                    LoginView()
-                case .connecting:
-                    CenterStatusView(text: "正在连接记账助手…")
-                case .live:
-                    ChatView()
+        GeometryReader { geo in
+            let menuWidth = min(geo.size.width * menuWidthRatio, 320)
+
+            ZStack(alignment: .leading) {
+                EATheme.background.ignoresSafeArea()
+
+                mainContent
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .disabled(vm.showSideMenu && isChatStage)
+                    .overlay {
+                        if vm.showSideMenu && isChatStage {
+                            EATheme.scrim
+                                .ignoresSafeArea()
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                                        vm.showSideMenu = false
+                                    }
+                                }
+                                .transition(.opacity)
+                        }
+                    }
+
+                if isChatStage {
+                    SideMenuView()
+                        .frame(width: menuWidth)
+                        .offset(x: vm.showSideMenu ? 0 : -menuWidth - 8)
+                        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: vm.showSideMenu)
+                        .zIndex(2)
+                }
+
+                if !vm.toastMessage.isEmpty {
+                    toastBanner
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, 54)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
         }
         .background(EATheme.background.ignoresSafeArea())
+        .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
         .onAppear { vm.onAppear() }
         .onDisappear { vm.onDisappear() }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(vm.stage == .live && !vm.connected ? EATheme.orange : EATheme.green)
-                .frame(width: 8, height: 8)
+    private var isChatStage: Bool {
+        vm.stage == .live || vm.stage == .connecting
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("智能记账助手")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(EATheme.label)
-                if let subtitle = vm.headerSubtitle {
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(EATheme.secondary)
-                }
+    @ViewBuilder
+    private var mainContent: some View {
+        switch vm.stage {
+        case .bootstrapping:
+            CenterStatusView(text: "正在恢复登录状态…")
+        case .login:
+            LoginView()
+        case .connecting:
+            ZStack {
+                ChatView()
+                CenterStatusView(text: "正在连接记账助手…")
+                    .background(EATheme.background.opacity(0.72))
             }
-
-            Spacer(minLength: 0)
-
-            if vm.stage == .live || vm.stage == .connecting {
-                Button("退出") { vm.logoutTapped() }
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(EATheme.blue)
-            }
+        case .live:
+            ChatView()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(EATheme.background.opacity(0.92))
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.35)
-        }
+    }
+
+    private var toastBanner: some View {
+        Text(vm.toastMessage)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(EATheme.label)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(EATheme.surfaceElevated)
+            .clipShape(Capsule())
+            .shadow(color: EATheme.toastShadow, radius: 12, y: 6)
+            .padding(.horizontal, 24)
     }
 }
 
