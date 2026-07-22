@@ -2,7 +2,7 @@
 
 智能记账（EasyAccount）SwiftUI iOS 客户端。
 
-按 Web 端 `EasyAccountAgent` 设计复现：**登录/注册、会话恢复、WebSocket 流式对话**；仅记账模块。
+按 Web 端 `EasyAccountAgent` 能力复现：**登录/注册、会话恢复、WebSocket 流式对话**；UI 对齐暗色对话式交互（登录首屏 / 手机号流程 / 侧栏 / 欢迎引导）。
 
 ## 要求
 
@@ -22,7 +22,13 @@
 - HTTP：`http://127.0.0.1:8088`
 - WS：`ws://127.0.0.1:8088`
 
-可在登录页「连接设置」中修改。模拟器访问本机后端请用 `127.0.0.1`；真机请改为电脑局域网 IP。
+可在登录页 →「使用账号密码登录」→「连接设置」中修改。模拟器访问本机后端请用 `127.0.0.1`；真机请改为电脑局域网 IP。
+
+登录入口：
+
+- 微信 / Apple ID：界面占位（即将开放）
+- 手机号登录：输入手机号 → 验证码；联调时验证码即密码，未注册自动注册
+- 账号密码登录：对接现有 `login` / `register` API
 
 ## 与后端对齐的能力
 
@@ -44,7 +50,7 @@ EasyAccount/
   Models/
   Services/
   ViewModels/
-  Views/
+  Views/          # LoginView / ChatView / SideMenuView / Root
   Theme/
   Assets.xcassets/
   Info.plist

@@ -13,6 +13,13 @@ enum AuthMode: Equatable {
     case register
 }
 
+enum LoginRoute: Equatable {
+    case landing
+    case phone
+    case phoneCode
+    case accountPassword
+}
+
 @MainActor
 final class EasyAccountViewModel: ObservableObject {
     @Published var stage: AppStage = .bootstrapping
@@ -23,6 +30,15 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var showPassword: Bool = false
     @Published var loginBusy: Bool = false
     @Published var showAdvanced: Bool = false
+
+    @Published var loginRoute: LoginRoute = .landing
+    @Published var agreedToTerms: Bool = false
+    @Published var phoneNumber: String = ""
+    @Published var verifyCode: String = ""
+    @Published var countryCode: String = "+86"
+    @Published var toastMessage: String = ""
+    @Published var showSideMenu: Bool = false
+    @Published var menuSearch: String = ""
 
     @Published var wsUrl: String
     @Published var httpBase: String
@@ -40,17 +56,39 @@ final class EasyAccountViewModel: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var sessionInvalidHandled = false
     private var handlingClose = false
+    private var toastTask: Task<Void, Never>?
 
     var canSubmitAuth: Bool {
         let name = loginName.trimmingCharacters(in: .whitespacesAndNewlines)
         let pwd = loginPassword
         return !loginBusy
+            && agreedToTerms
             && !name.isEmpty && name.count <= 50
             && !pwd.isEmpty && pwd.count <= 128
     }
 
+    var canContinuePhone: Bool {
+        !loginBusy && agreedToTerms && isValidPhone(phoneNumber)
+    }
+
+    var canSubmitPhoneCode: Bool {
+        !loginBusy
+            && agreedToTerms
+            && isValidPhone(phoneNumber)
+            && verifyCode.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4
+    }
+
     var canSend: Bool {
         connected && !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var displayUserName: String {
+        let name = currentUser?.displayName ?? ""
+        return name.isEmpty ? "记账用户" : name
+    }
+
+    var greetingLines: (String, String) {
+        ("Hi \(displayUserName)，", "今天想记点什么账？")
     }
 
     var headerSubtitle: String? {
@@ -83,6 +121,7 @@ final class EasyAccountViewModel: ObservableObject {
 
     func onDisappear() {
         reconnectTask?.cancel()
+        toastTask?.cancel()
         socket.disconnect(intentional: true)
     }
 
@@ -91,11 +130,62 @@ final class EasyAccountViewModel: ObservableObject {
         authError = ""
     }
 
+    func goLoginRoute(_ route: LoginRoute) {
+        authError = ""
+        loginRoute = route
+    }
+
+    func backFromLoginSubpage() {
+        authError = ""
+        switch loginRoute {
+        case .phoneCode:
+            verifyCode = ""
+            loginRoute = .phone
+        case .phone, .accountPassword:
+            loginRoute = .landing
+        case .landing:
+            break
+        }
+    }
+
+    func wechatLoginTapped() {
+        guard requireAgreement() else { return }
+        showToast("微信登录即将开放")
+    }
+
+    func appleLoginTapped() {
+        guard requireAgreement() else { return }
+        showToast("Apple ID 登录即将开放")
+    }
+
+    func phoneLoginTapped() {
+        guard requireAgreement() else { return }
+        goLoginRoute(.phone)
+    }
+
+    func continuePhoneLogin() {
+        guard canContinuePhone else {
+            if !agreedToTerms {
+                showToast("请先同意用户协议与隐私政策")
+            } else if !isValidPhone(phoneNumber) {
+                authError = "请输入正确的手机号"
+            }
+            return
+        }
+        authError = ""
+        loginRoute = .phoneCode
+    }
+
+    func submitPhoneCodeLogin() {
+        Task { await onPhoneCodeSubmit() }
+    }
+
     func submitAuth() {
         Task { await onAuthSubmit() }
     }
 
     func logoutTapped() {
+        showSideMenu = false
         Task { await onLogout() }
     }
 
@@ -107,6 +197,27 @@ final class EasyAccountViewModel: ObservableObject {
         inputText = ""
         waitingReply = true
         streamingMsgId = nil
+    }
+
+    func sendSuggestion(_ text: String) {
+        inputText = text
+        sendChat()
+    }
+
+    func showToast(_ message: String) {
+        toastMessage = message
+        toastTask?.cancel()
+        toastTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            if toastMessage == message {
+                toastMessage = ""
+            }
+        }
+    }
+
+    func menuPlaceholderTapped(_ title: String) {
+        showToast("「\(title)」即将上线")
     }
 
     // MARK: - Auth / bootstrap
@@ -139,9 +250,43 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
+    private func onPhoneCodeSubmit() async {
+        guard canSubmitPhoneCode else {
+            if !agreedToTerms {
+                showToast("请先同意用户协议与隐私政策")
+            } else {
+                authError = "请输入验证码"
+            }
+            return
+        }
+        let name = normalizedPhone()
+        let password = verifyCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        loginBusy = true
+        authError = ""
+        defer { loginBusy = false }
+        do {
+            // 未注册手机号自动注册；已存在则回退登录（与设计文案一致）
+            let data: AuthSessionResponse
+            do {
+                data = try await AuthService.register(httpBase: httpBase, name: name, password: password)
+            } catch let error as APIError where error.status == 409 {
+                data = try await AuthService.login(httpBase: httpBase, name: name, password: password)
+            }
+            applyAuthSuccess(data, name: name)
+        } catch let error as APIError {
+            authError = error.message
+        } catch {
+            authError = "登录失败"
+        }
+    }
+
     private func onAuthSubmit() async {
         let name = loginName.trimmingCharacters(in: .whitespacesAndNewlines)
         let password = loginPassword
+        if !agreedToTerms {
+            showToast("请先同意用户协议与隐私政策")
+            return
+        }
         if name.isEmpty || name.count > 50 {
             authError = "用户名不能为空，最长 50"
             return
@@ -173,7 +318,10 @@ final class EasyAccountViewModel: ObservableObject {
         token = data.token
         currentUser = data.user ?? AuthUser(id: nil, name: name)
         loginPassword = ""
+        verifyCode = ""
         showPassword = false
+        loginRoute = .landing
+        showSideMenu = false
         resetChatState()
         connectWs()
     }
@@ -188,6 +336,7 @@ final class EasyAccountViewModel: ObservableObject {
         currentUser = nil
         resetChatState()
         authMode = .login
+        loginRoute = .landing
         stage = .login
         authError = ""
     }
@@ -217,7 +366,10 @@ final class EasyAccountViewModel: ObservableObject {
             connected = true
             stage = .live
             reconnectAttempts = 0
-            pushMessage(ChatMessage(id: nextId(), kind: .system, text: msg.content ?? "记账助手已连接"))
+            // 空会话时用欢迎语，不再推系统灰条打扰首屏
+            if !messages.isEmpty {
+                pushMessage(ChatMessage(id: nextId(), kind: .system, text: msg.content ?? "记账助手已连接"))
+            }
         case .messageDelta:
             if streamingMsgId == nil {
                 let id = nextId()
@@ -319,6 +471,7 @@ final class EasyAccountViewModel: ObservableObject {
         currentUser = nil
         resetChatState()
         stage = .login
+        loginRoute = .landing
         authError = message
         sessionInvalidHandled = false
     }
@@ -337,7 +490,24 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     private func nextId() -> Int {
-        messages.count
+        (messages.map(\.id).max() ?? -1) + 1
+    }
+
+    private func requireAgreement() -> Bool {
+        guard agreedToTerms else {
+            showToast("请先同意用户协议与隐私政策")
+            return false
+        }
+        return true
+    }
+
+    private func isValidPhone(_ raw: String) -> Bool {
+        let digits = raw.filter(\.isNumber)
+        return digits.count == 11 && digits.hasPrefix("1")
+    }
+
+    private func normalizedPhone() -> String {
+        phoneNumber.filter(\.isNumber)
     }
 }
 
