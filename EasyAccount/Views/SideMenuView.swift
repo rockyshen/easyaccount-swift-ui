@@ -28,6 +28,10 @@ struct SideMenuView: View {
 
             Spacer(minLength: 16)
 
+            AppearancePicker(mode: appearanceBinding)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
+
             searchBar
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
@@ -124,5 +128,12 @@ struct SideMenuView: View {
     private var avatarInitial: String {
         let name = vm.displayUserName
         return name.isEmpty ? "账" : String(name.prefix(1))
+    }
+
+    private var appearanceBinding: Binding<AppearanceMode> {
+        Binding(
+            get: { vm.appearanceMode },
+            set: { vm.setAppearanceMode($0) }
+        )
     }
 }

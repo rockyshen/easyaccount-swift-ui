@@ -39,6 +39,7 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var toastMessage: String = ""
     @Published var showSideMenu: Bool = false
     @Published var menuSearch: String = ""
+    @Published var appearanceMode: AppearanceMode
 
     @Published var wsUrl: String
     @Published var httpBase: String
@@ -112,7 +113,14 @@ final class EasyAccountViewModel: ObservableObject {
     ) {
         self.wsUrl = defaultWsUrl
         self.httpBase = AuthService.resolveHttpBase(httpUrl: defaultHttpUrl, wsUrl: defaultWsUrl)
+        self.appearanceMode = SessionStore.getAppearanceMode()
         socket.delegate = self
+    }
+
+    func setAppearanceMode(_ mode: AppearanceMode) {
+        guard appearanceMode != mode else { return }
+        appearanceMode = mode
+        SessionStore.persistAppearanceMode(mode)
     }
 
     func onAppear() {

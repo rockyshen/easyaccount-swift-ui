@@ -21,6 +21,7 @@
 		A1000000000000000000000C /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* ChatView.swift */; };
 		A1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* Assets.xcassets */; };
 		A1000000000000000000000E /* SideMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* SideMenuView.swift */; };
+		A1000000000000000000000F /* AppearancePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* AppearancePicker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +40,7 @@
 		A2000000000000000000000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000000000000000000000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000000000000000000000F /* SideMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenuView.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* AppearancePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearancePicker.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* EasyAccount.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EasyAccount.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -127,6 +129,7 @@
 				A2000000000000000000000B /* LoginView.swift */,
 				A2000000000000000000000C /* ChatView.swift */,
 				A2000000000000000000000F /* SideMenuView.swift */,
+				A20000000000000000000010 /* AppearancePicker.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -214,6 +217,7 @@
 				A1000000000000000000000B /* LoginView.swift in Sources */,
 				A1000000000000000000000C /* ChatView.swift in Sources */,
 				A1000000000000000000000E /* SideMenuView.swift in Sources */,
+				A1000000000000000000000F /* AppearancePicker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

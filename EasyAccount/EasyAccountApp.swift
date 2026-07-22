@@ -8,7 +8,7 @@ struct EasyAccountApp: App {
         WindowGroup {
             EasyAccountRootView()
                 .environmentObject(viewModel)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(viewModel.appearanceMode.preferredColorScheme)
         }
     }
 }

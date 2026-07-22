@@ -43,7 +43,14 @@ struct LoginView: View {
 
     private var landingScreen: some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 40)
+            HStack {
+                Spacer()
+                AppearancePicker(mode: appearanceBinding, compact: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+
+            Spacer(minLength: 24)
 
             brandHero
                 .padding(.bottom, 56)
@@ -510,6 +517,13 @@ struct LoginView: View {
             return vm.authMode == .register ? "注册中…" : "登录中…"
         }
         return vm.authMode == .register ? "注册并进入" : "登录"
+    }
+
+    private var appearanceBinding: Binding<AppearanceMode> {
+        Binding(
+            get: { vm.appearanceMode },
+            set: { vm.setAppearanceMode($0) }
+        )
     }
 }
 

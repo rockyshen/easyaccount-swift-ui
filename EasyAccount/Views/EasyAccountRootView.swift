@@ -17,7 +17,7 @@ struct EasyAccountRootView: View {
                     .disabled(vm.showSideMenu && isChatStage)
                     .overlay {
                         if vm.showSideMenu && isChatStage {
-                            Color.black.opacity(0.45)
+                            EATheme.scrim
                                 .ignoresSafeArea()
                                 .onTapGesture {
                                     withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -47,7 +47,7 @@ struct EasyAccountRootView: View {
             .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
         }
         .background(EATheme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
         .onAppear { vm.onAppear() }
         .onDisappear { vm.onDisappear() }
     }
@@ -82,7 +82,7 @@ struct EasyAccountRootView: View {
             .padding(.vertical, 12)
             .background(EATheme.surfaceElevated)
             .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+            .shadow(color: EATheme.toastShadow, radius: 12, y: 6)
             .padding(.horizontal, 24)
     }
 }
