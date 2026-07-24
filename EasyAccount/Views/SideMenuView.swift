@@ -3,11 +3,11 @@ import SwiftUI
 struct SideMenuView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
 
-    private let menuItems: [(icon: String, title: String, destination: ManagementDestination?)] = [
+    private let menuItems: [(icon: String, title: String, destination: ManagementDestination)] = [
         ("creditcard", "账户管理", .accounts),
         ("square.grid.2x2", "分类管理", .categories),
         ("chart.pie", "概览分析", .dashboard),
-        ("clock.arrow.circlepath", "定时任务", nil),
+        ("clock.arrow.circlepath", "定时任务", .scheduledTasks),
     ]
 
     var body: some View {
@@ -20,11 +20,7 @@ struct SideMenuView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(menuItems, id: \.title) { item in
                     menuRow(icon: item.icon, title: item.title) {
-                        if let destination = item.destination {
-                            vm.openManagement(destination)
-                        } else {
-                            vm.menuPlaceholderTapped(item.title)
-                        }
+                        vm.openManagement(item.destination)
                     }
                 }
             }
@@ -35,10 +31,6 @@ struct SideMenuView: View {
             AppearancePicker(mode: appearanceBinding)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
-
-            searchBar
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
 
             Button {
                 vm.logoutTapped()
@@ -90,21 +82,6 @@ struct SideMenuView: View {
 
             Spacer(minLength: 0)
         }
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(EATheme.tertiary)
-            TextField("搜索对话或功能", text: $vm.menuSearch)
-                .font(.system(size: 14))
-                .foregroundStyle(EATheme.label)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(EATheme.inputFill)
-        .clipShape(Capsule())
     }
 
     private func menuRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
