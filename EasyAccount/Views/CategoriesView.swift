@@ -102,8 +102,7 @@ struct CategoriesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("完成") { appVM.closeManagement() }
-                        .foregroundStyle(EATheme.blue)
+                    ManagementBackButton { appVM.closeManagement() }
                 }
             }
             .task { await vm.loadActions() }

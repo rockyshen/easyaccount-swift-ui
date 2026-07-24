@@ -25,6 +25,7 @@ enum ManagementDestination: String, Identifiable, Equatable {
     case accounts
     case categories
     case dashboard
+    case scheduledTasks
 
     var id: String { rawValue }
 
@@ -33,6 +34,7 @@ enum ManagementDestination: String, Identifiable, Equatable {
         case .accounts: return "账户管理"
         case .categories: return "分类管理"
         case .dashboard: return "概览分析"
+        case .scheduledTasks: return "定时任务"
         }
     }
 }
@@ -247,14 +249,18 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     func openManagement(_ destination: ManagementDestination) {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
             showSideMenu = false
         }
-        managementDestination = destination
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            managementDestination = destination
+        }
     }
 
     func closeManagement() {
-        managementDestination = nil
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            managementDestination = nil
+        }
     }
 
     func handleUnauthorized(_ message: String) {
