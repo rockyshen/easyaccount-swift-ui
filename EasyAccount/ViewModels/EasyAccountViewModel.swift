@@ -421,32 +421,65 @@ final class EasyAccountViewModel: ObservableObject {
             reconnectAttempts = 0
             // 重连成功不往对话里插系统提示，保持无感知
         case .messageDelta:
+            let chunk = msg.content ?? ""
+            // 服务端偶发把重连文案当消息流下发，直接忽略
+            if streamingMsgId == nil, isConnectionStatusNoise(chunk) {
+                return
+            }
             if streamingMsgId == nil {
                 let id = nextId()
                 streamingMsgId = id
-                pushMessage(ChatMessage(id: id, kind: .assistant, text: msg.content ?? "", streaming: true))
+                pushMessage(ChatMessage(id: id, kind: .assistant, text: chunk, streaming: true))
             } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
-                messages[idx].text += msg.content ?? ""
+                messages[idx].text += chunk
             }
         case .messageEnd:
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
-                if let content = msg.content, !content.isEmpty {
-                    messages[idx].text = content
+                let finalText = {
+                    if let content = msg.content, !content.isEmpty { return content }
+                    return messages[idx].text
+                }()
+                if isConnectionStatusNoise(finalText) {
+                    messages.remove(at: idx)
+                } else {
+                    if let content = msg.content, !content.isEmpty {
+                        messages[idx].text = content
+                    }
+                    messages[idx].streaming = false
                 }
-                messages[idx].streaming = false
                 streamingMsgId = nil
-            } else if let content = msg.content, !content.isEmpty {
+            } else if let content = msg.content, !content.isEmpty, !isConnectionStatusNoise(content) {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
             waitingReply = false
         case .error:
-            pushMessage(ChatMessage(id: nextId(), kind: .error, text: msg.message ?? "发生错误"))
+            let text = msg.message ?? "发生错误"
+            if !isConnectionStatusNoise(text) {
+                pushMessage(ChatMessage(id: nextId(), kind: .error, text: text))
+            }
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].streaming = false
                 streamingMsgId = nil
             }
             waitingReply = false
         }
+    }
+
+    /// 过滤断线/重连状态文案，避免插入聊天记录。
+    private func isConnectionStatusNoise(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let needles = [
+            "连接已断开",
+            "已断开连接",
+            "正在重连",
+            "重新连接",
+            "记账助手已连接",
+            "已重新连接",
+            "连接中断",
+            "断线重连"
+        ]
+        return needles.contains { trimmed.contains($0) }
     }
 
     private func handleSocketClosed() {
