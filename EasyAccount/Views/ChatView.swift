@@ -23,7 +23,10 @@ struct ChatView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+            .contentShape(Rectangle())
+            .simultaneousGesture(dismissKeyboardDrag)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             composer
         }
         .background(EATheme.background.ignoresSafeArea())
@@ -32,6 +35,7 @@ struct ChatView: View {
     private var chatHeader: some View {
         HStack {
             Button {
+                dismissKeyboard()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     vm.showSideMenu = true
                 }
@@ -64,50 +68,56 @@ struct ChatView: View {
     }
 
     private var emptyGreeting: some View {
-        VStack(spacing: 28) {
-            Spacer(minLength: 40)
+        ScrollView {
+            VStack(spacing: 28) {
+                Spacer(minLength: 40)
 
-            VStack(spacing: 10) {
-                Text(vm.greetingLines.0)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(EATheme.label)
-                Text(vm.greetingLines.1)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(EATheme.label)
-            }
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 24)
-
-            Text("可以说收支、查余额，或让我帮你整理账本")
-                .font(.system(size: 14))
-                .foregroundStyle(EATheme.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-
-            VStack(spacing: 10) {
-                ForEach(suggestions, id: \.self) { text in
-                    Button {
-                        vm.sendSuggestion(text)
-                    } label: {
-                        Text(text)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(EATheme.label)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 13)
-                            .background(EATheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .buttonStyle(PressableButtonStyle())
-                    .disabled(!vm.connected || vm.waitingReply)
-                    .opacity(vm.connected && !vm.waitingReply ? 1 : 0.45)
+                VStack(spacing: 10) {
+                    Text(vm.greetingLines.0)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(EATheme.label)
+                    Text(vm.greetingLines.1)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(EATheme.label)
                 }
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 8)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
 
-            Spacer()
+                Text("可以说收支、查余额，或让我帮你整理账本")
+                    .font(.system(size: 14))
+                    .foregroundStyle(EATheme.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+
+                VStack(spacing: 10) {
+                    ForEach(suggestions, id: \.self) { text in
+                        Button {
+                            dismissKeyboard()
+                            vm.sendSuggestion(text)
+                        } label: {
+                            Text(text)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(EATheme.label)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 13)
+                                .background(EATheme.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(PressableButtonStyle())
+                        .disabled(!vm.connected || vm.waitingReply)
+                        .opacity(vm.connected && !vm.waitingReply ? 1 : 0.45)
+                    }
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 8)
+
+                Spacer(minLength: 40)
+            }
+            .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.always)
     }
 
     private var messageList: some View {
@@ -124,6 +134,8 @@ struct ChatView: View {
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .scrollBounceBehavior(.basedOnSize)
             .onChange(of: vm.messages) { _, _ in
                 if let last = vm.messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -160,7 +172,7 @@ struct ChatView: View {
                 .font(.system(size: 16))
                 .foregroundStyle(EATheme.label)
                 .onSubmit {
-                    if vm.canSend { vm.sendChat() }
+                    sendFromComposer()
                 }
 
                 if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -175,7 +187,7 @@ struct ChatView: View {
                     .buttonStyle(.plain)
                 } else {
                     Button {
-                        vm.sendChat()
+                        sendFromComposer()
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 28))
@@ -194,6 +206,24 @@ struct ChatView: View {
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
+    }
+
+    private var dismissKeyboardDrag: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+            .onChanged { value in
+                guard inputFocused, value.translation.height > 24 else { return }
+                dismissKeyboard()
+            }
+    }
+
+    private func dismissKeyboard() {
+        inputFocused = false
+    }
+
+    private func sendFromComposer() {
+        guard vm.canSend else { return }
+        dismissKeyboard()
+        vm.sendChat()
     }
 }
 
