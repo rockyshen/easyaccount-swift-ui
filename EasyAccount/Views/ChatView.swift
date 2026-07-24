@@ -117,8 +117,16 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(vm.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
+                        MessageBubble(
+                            message: message,
+                            onUserShortTap: {
+                                reuseUserMessage(message.text)
+                            },
+                            onUserLongPressCopy: {
+                                copyUserMessage(message.text)
+                            }
+                        )
+                        .id(message.id)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -333,6 +341,19 @@ struct ChatView: View {
         dismissKeyboard()
         vm.sendChat()
     }
+
+    /// 短按用户气泡：把内容回填到输入框以便重新编辑发送。
+    private func reuseUserMessage(_ text: String) {
+        vm.inputText = text
+        inputFocused = true
+    }
+
+    /// 长按用户气泡：复制到剪贴板。
+    private func copyUserMessage(_ text: String) {
+        UIPasteboard.general.string = text
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        vm.showToast("已复制")
+    }
 }
 
 /// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
@@ -431,6 +452,8 @@ struct ConnectionStatusDot: View {
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var onUserShortTap: (() -> Void)? = nil
+    var onUserLongPressCopy: (() -> Void)? = nil
 
     var body: some View {
         switch message.kind {
@@ -486,8 +509,24 @@ struct MessageBubble: View {
                         style: .continuous
                     )
                 )
+                .contentShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 18,
+                        bottomLeadingRadius: 18,
+                        bottomTrailingRadius: 6,
+                        topTrailingRadius: 18,
+                        style: .continuous
+                    )
+                )
+                .onTapGesture {
+                    onUserShortTap?()
+                }
+                .onLongPressGesture(minimumDuration: 0.35) {
+                    onUserLongPressCopy?()
+                }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.leading, 40)
+                .accessibilityHint("轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)
