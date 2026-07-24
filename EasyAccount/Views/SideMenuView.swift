@@ -32,10 +32,6 @@ struct SideMenuView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
 
-            searchBar
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-
             Button {
                 vm.logoutTapped()
             } label: {
@@ -86,43 +82,6 @@ struct SideMenuView: View {
 
             Spacer(minLength: 0)
         }
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(EATheme.tertiary)
-            TextField("搜索对话或功能", text: $vm.menuSearch)
-                .font(.system(size: 14))
-                .foregroundStyle(EATheme.label)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(EATheme.inputFill)
-        .clipShape(Capsule())
-    }
-
-    private func menuRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(EATheme.label)
-                    .frame(width: 24)
-                Text(title)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(EATheme.label)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(EATheme.tertiary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PressableButtonStyle())
     }
 
     private var avatarInitial: String {
