@@ -6,46 +6,37 @@ struct EasyAccountRootView: View {
     private let menuWidthRatio: CGFloat = 0.78
 
     var body: some View {
-        GeometryReader { geo in
-            let menuWidth = min(geo.size.width * menuWidthRatio, 320)
+        ZStack(alignment: .leading) {
+            EATheme.background.ignoresSafeArea()
 
-            ZStack(alignment: .leading) {
-                EATheme.background.ignoresSafeArea()
-
-                mainContent
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .disabled(vm.showSideMenu && isChatStage)
-                    .overlay {
-                        if vm.showSideMenu && isChatStage {
-                            EATheme.scrim
-                                .ignoresSafeArea()
-                                .onTapGesture {
-                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                                        vm.showSideMenu = false
-                                    }
+            mainContent
+                .disabled(vm.showSideMenu && isChatStage)
+                .overlay {
+                    if vm.showSideMenu && isChatStage {
+                        EATheme.scrim
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                                    vm.showSideMenu = false
                                 }
-                                .transition(.opacity)
-                        }
+                            }
+                            .transition(.opacity)
                     }
-
-                if isChatStage {
-                    SideMenuView()
-                        .frame(width: menuWidth)
-                        .offset(x: vm.showSideMenu ? 0 : -menuWidth - 8)
-                        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: vm.showSideMenu)
-                        .zIndex(2)
                 }
 
-                if !vm.toastMessage.isEmpty {
-                    toastBanner
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(3)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .padding(.top, 54)
-                }
+            if isChatStage {
+                sideMenuLayer
             }
-            .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
+
+            if !vm.toastMessage.isEmpty {
+                toastBanner
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(3)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 54)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
         .background(EATheme.background.ignoresSafeArea())
         .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
         .onAppear { vm.onAppear() }
@@ -54,6 +45,25 @@ struct EasyAccountRootView: View {
 
     private var isChatStage: Bool {
         vm.stage == .live || vm.stage == .connecting
+    }
+
+    /// GeometryReader 只包侧栏，避免把聊天主界面锁死在固定高度，导致键盘无法把输入区顶起。
+    private var sideMenuLayer: some View {
+        GeometryReader { geo in
+            let menuWidth = min(geo.size.width * menuWidthRatio, 320)
+
+            HStack(spacing: 0) {
+                SideMenuView()
+                    .frame(width: menuWidth)
+                    .offset(x: vm.showSideMenu ? 0 : -menuWidth - 8)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: vm.showSideMenu)
+
+                Spacer(minLength: 0)
+                    .allowsHitTesting(false)
+            }
+        }
+        .zIndex(2)
+        .allowsHitTesting(vm.showSideMenu)
     }
 
     @ViewBuilder
