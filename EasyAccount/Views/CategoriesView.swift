@@ -23,51 +23,99 @@ final class CategoriesViewModel: ObservableObject {
         self.onUnauthorized = onUnauthorized
     }
 
-    func loadActions() async {
-        loadingActions = true
+    func loadActions(force: Bool = false) async {
+        if !ManagementCache.actions.isEmpty {
+            actions = ManagementCache.actions
+            if selectedActionId == nil {
+                selectedActionId = actions.first?.id
+            }
+            if let actionId = selectedActionId, let cachedTypes = ManagementCache.types(for: actionId) {
+                types = cachedTypes
+            }
+        }
+
+        if ManagementCache.hasActionsCache(force: force) {
+            errorMessage = ""
+            if let actionId = selectedActionId {
+                await loadTypes(actionId: actionId, force: force)
+            }
+            return
+        }
+
+        let showSpinner = actions.isEmpty
+        if showSpinner {
+            loadingActions = true
+        }
         errorMessage = ""
-        defer { loadingActions = false }
+        defer { if showSpinner { loadingActions = false } }
+
         do {
             let list = try await CatalogService.fetchActions(httpBase: httpBase(), token: token())
+            ManagementCache.setActions(list)
             actions = list
-            if selectedActionId == nil {
+            if selectedActionId == nil || !(list.contains { $0.id == selectedActionId }) {
                 selectedActionId = list.first?.id
             }
             if let actionId = selectedActionId {
-                await loadTypes(actionId: actionId)
+                await loadTypes(actionId: actionId, force: force)
             }
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
         } catch let error as APIError {
-            errorMessage = error.message
+            if actions.isEmpty {
+                errorMessage = error.message
+            }
         } catch {
-            errorMessage = "加载收支类型失败"
+            if actions.isEmpty {
+                errorMessage = "加载收支类型失败"
+            }
         }
     }
 
     func selectAction(_ actionId: Int) async {
         guard selectedActionId != actionId else { return }
         selectedActionId = actionId
-        await loadTypes(actionId: actionId)
+        await loadTypes(actionId: actionId, force: false)
     }
 
-    private func loadTypes(actionId: Int) async {
-        loadingTypes = true
-        defer { loadingTypes = false }
+    private func loadTypes(actionId: Int, force: Bool) async {
+        if let cached = ManagementCache.types(for: actionId) {
+            types = cached
+        }
+
+        if ManagementCache.hasTypesCache(actionId: actionId, force: force) {
+            return
+        }
+
+        let showSpinner = types.isEmpty
+        if showSpinner {
+            loadingTypes = true
+        }
+        defer { if showSpinner { loadingTypes = false } }
+
         do {
-            types = try await CatalogService.fetchTypes(
+            let list = try await CatalogService.fetchTypes(
                 httpBase: httpBase(),
                 token: token(),
                 actionId: actionId
             )
+            ManagementCache.setTypes(list, for: actionId)
+            // 用户可能已切到别的 action，只回填当前选中的
+            if selectedActionId == actionId {
+                types = list
+            }
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
         } catch let error as APIError {
-            errorMessage = error.message
-            types = []
+            if types.isEmpty {
+                errorMessage = error.message
+                types = []
+            }
         } catch {
-            errorMessage = "加载分类失败"
-            types = []
+            if types.isEmpty {
+                errorMessage = "加载分类失败"
+                types = []
+            }
         }
     }
 }
@@ -102,11 +150,11 @@ struct CategoriesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("完成") { appVM.closeManagement() }
-                        .foregroundStyle(EATheme.blue)
+                    ManagementBackButton { appVM.closeManagement() }
                 }
             }
             .task { await vm.loadActions() }
+            .refreshable { await vm.loadActions(force: true) }
         }
     }
 
@@ -141,7 +189,7 @@ struct CategoriesView: View {
 
     @ViewBuilder
     private var typeTree: some View {
-        if vm.loadingTypes {
+        if vm.loadingTypes && vm.types.isEmpty {
             CenterStatusView(text: "加载分类树…")
         } else if vm.types.isEmpty {
             VStack(spacing: 10) {
@@ -172,7 +220,7 @@ struct CategoriesView: View {
                 .foregroundStyle(EATheme.danger)
                 .multilineTextAlignment(.center)
             Button("重试") {
-                Task { await vm.loadActions() }
+                Task { await vm.loadActions(force: true) }
             }
             .foregroundStyle(EATheme.blue)
         }

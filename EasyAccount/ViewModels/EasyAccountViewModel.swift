@@ -25,6 +25,7 @@ enum ManagementDestination: String, Identifiable, Equatable {
     case accounts
     case categories
     case dashboard
+    case scheduledTasks
 
     var id: String { rawValue }
 
@@ -33,6 +34,7 @@ enum ManagementDestination: String, Identifiable, Equatable {
         case .accounts: return "账户管理"
         case .categories: return "分类管理"
         case .dashboard: return "概览分析"
+        case .scheduledTasks: return "定时任务"
         }
     }
 }
@@ -55,7 +57,6 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var countryCode: String = "+86"
     @Published var toastMessage: String = ""
     @Published var showSideMenu: Bool = false
-    @Published var menuSearch: String = ""
     @Published var managementDestination: ManagementDestination?
     @Published var appearanceMode: AppearanceMode
 
@@ -247,14 +248,18 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     func openManagement(_ destination: ManagementDestination) {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
             showSideMenu = false
         }
-        managementDestination = destination
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            managementDestination = destination
+        }
     }
 
     func closeManagement() {
-        managementDestination = nil
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            managementDestination = nil
+        }
     }
 
     func handleUnauthorized(_ message: String) {
@@ -381,6 +386,7 @@ final class EasyAccountViewModel: ObservableObject {
         token = ""
         currentUser = nil
         managementDestination = nil
+        ManagementCache.clear()
         resetChatState()
         authMode = .login
         loginRoute = .landing
@@ -413,37 +419,67 @@ final class EasyAccountViewModel: ObservableObject {
             connected = true
             stage = .live
             reconnectAttempts = 0
-            // 空会话时用欢迎语，不再推系统灰条打扰首屏
-            if !messages.isEmpty {
-                pushMessage(ChatMessage(id: nextId(), kind: .system, text: msg.content ?? "记账助手已连接"))
-            }
+            // 重连成功不往对话里插系统提示，保持无感知
         case .messageDelta:
+            let chunk = msg.content ?? ""
+            // 服务端偶发把重连文案当消息流下发，直接忽略
+            if streamingMsgId == nil, isConnectionStatusNoise(chunk) {
+                return
+            }
             if streamingMsgId == nil {
                 let id = nextId()
                 streamingMsgId = id
-                pushMessage(ChatMessage(id: id, kind: .assistant, text: msg.content ?? "", streaming: true))
+                pushMessage(ChatMessage(id: id, kind: .assistant, text: chunk, streaming: true))
             } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
-                messages[idx].text += msg.content ?? ""
+                messages[idx].text += chunk
             }
         case .messageEnd:
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
-                if let content = msg.content, !content.isEmpty {
-                    messages[idx].text = content
+                let finalText = {
+                    if let content = msg.content, !content.isEmpty { return content }
+                    return messages[idx].text
+                }()
+                if isConnectionStatusNoise(finalText) {
+                    messages.remove(at: idx)
+                } else {
+                    if let content = msg.content, !content.isEmpty {
+                        messages[idx].text = content
+                    }
+                    messages[idx].streaming = false
                 }
-                messages[idx].streaming = false
                 streamingMsgId = nil
-            } else if let content = msg.content, !content.isEmpty {
+            } else if let content = msg.content, !content.isEmpty, !isConnectionStatusNoise(content) {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
             waitingReply = false
         case .error:
-            pushMessage(ChatMessage(id: nextId(), kind: .error, text: msg.message ?? "发生错误"))
+            let text = msg.message ?? "发生错误"
+            if !isConnectionStatusNoise(text) {
+                pushMessage(ChatMessage(id: nextId(), kind: .error, text: text))
+            }
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].streaming = false
                 streamingMsgId = nil
             }
             waitingReply = false
         }
+    }
+
+    /// 过滤断线/重连状态文案，避免插入聊天记录。
+    private func isConnectionStatusNoise(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let needles = [
+            "连接已断开",
+            "已断开连接",
+            "正在重连",
+            "重新连接",
+            "记账助手已连接",
+            "已重新连接",
+            "连接中断",
+            "断线重连"
+        ]
+        return needles.contains { trimmed.contains($0) }
     }
 
     private func handleSocketClosed() {
@@ -477,7 +513,7 @@ final class EasyAccountViewModel: ObservableObject {
             }
 
             if stage == .live {
-                pushMessage(ChatMessage(id: nextId(), kind: .system, text: "连接已断开，正在重连…"))
+                // 断线后后台静默重连，不在对话中展示断开/重连提示
                 let stillValid = await checkSessionStillValid()
                 if !stillValid {
                     await forceToLogin("会话已失效（可能被其他设备登录踢下线）")
@@ -517,6 +553,7 @@ final class EasyAccountViewModel: ObservableObject {
         token = ""
         currentUser = nil
         managementDestination = nil
+        ManagementCache.clear()
         resetChatState()
         stage = .login
         loginRoute = .landing

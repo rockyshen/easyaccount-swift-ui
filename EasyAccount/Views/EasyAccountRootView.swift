@@ -5,21 +5,28 @@ struct EasyAccountRootView: View {
 
     private let menuWidthRatio: CGFloat = 0.78
 
+    /// 拖动手势过程中的额外水平位移；松手后归零并由 `showSideMenu` 决定最终开合。
+    @State private var menuDragTranslation: CGFloat = 0
+    @State private var menuWidthCache: CGFloat = 280
+    @State private var isMenuDragging = false
+
     var body: some View {
         ZStack(alignment: .leading) {
             EATheme.background.ignoresSafeArea()
 
             mainContent
                 .disabled(vm.showSideMenu && isChatStage)
+                .simultaneousGesture(menuOpenSwipeGesture)
                 .overlay {
-                    if vm.showSideMenu && isChatStage {
+                    if isChatStage, vm.showSideMenu || isMenuDragging {
                         EATheme.scrim
+                            .opacity(Double(revealedMenuProgress))
                             .ignoresSafeArea()
                             .onTapGesture {
-                                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                                    vm.showSideMenu = false
-                                }
+                                guard !isMenuDragging else { return }
+                                closeSideMenu()
                             }
+                            .highPriorityGesture(menuCloseDragGesture)
                             .transition(.opacity)
                     }
                 }
@@ -35,15 +42,23 @@ struct EasyAccountRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(.top, 54)
             }
+
+            if let destination = vm.managementDestination {
+                managementPage(for: destination)
+                    .environmentObject(vm)
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .trailing),
+                            removal: .move(edge: .trailing)
+                        )
+                    )
+                    .zIndex(5)
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
+        .animation(.spring(response: 0.34, dampingFraction: 0.9), value: vm.managementDestination)
         .background(EATheme.background.ignoresSafeArea())
         .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
-        .fullScreenCover(item: $vm.managementDestination) { destination in
-            managementPage(for: destination)
-                .environmentObject(vm)
-                .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
-        }
         .onAppear { vm.onAppear() }
         .onDisappear { vm.onDisappear() }
     }
@@ -57,11 +72,25 @@ struct EasyAccountRootView: View {
             CategoriesView(appVM: vm)
         case .dashboard:
             DashboardView(appVM: vm)
+        case .scheduledTasks:
+            ComingSoonManagementView(
+                title: destination.title,
+                systemImage: "clock.arrow.circlepath",
+                message: "定时记账与提醒即将开放"
+            )
         }
     }
 
     private var isChatStage: Bool {
         vm.stage == .live || vm.stage == .connecting
+    }
+
+    private var revealedMenuProgress: CGFloat {
+        let closed = -menuWidthCache - 8
+        let current = resolvedMenuOffset(menuWidth: menuWidthCache)
+        let span = -closed
+        guard span > 0 else { return vm.showSideMenu ? 1 : 0 }
+        return min(1, max(0, (current - closed) / span))
     }
 
     /// GeometryReader 只包侧栏，避免把聊天主界面锁死在固定高度，导致键盘无法把输入区顶起。
@@ -72,15 +101,86 @@ struct EasyAccountRootView: View {
             HStack(spacing: 0) {
                 SideMenuView()
                     .frame(width: menuWidth)
-                    .offset(x: vm.showSideMenu ? 0 : -menuWidth - 8)
-                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: vm.showSideMenu)
+                    .offset(x: resolvedMenuOffset(menuWidth: menuWidth))
+                    .highPriorityGesture(menuCloseDragGesture)
 
                 Spacer(minLength: 0)
                     .allowsHitTesting(false)
             }
+            .onAppear { menuWidthCache = menuWidth }
+            .onChange(of: geo.size.width) { _, _ in
+                menuWidthCache = menuWidth
+            }
         }
         .zIndex(2)
-        .allowsHitTesting(vm.showSideMenu)
+        .allowsHitTesting(vm.showSideMenu || isMenuDragging)
+    }
+
+    private func resolvedMenuOffset(menuWidth: CGFloat) -> CGFloat {
+        let closed = -menuWidth - 8
+        let base: CGFloat = vm.showSideMenu ? 0 : closed
+        return min(0, max(closed, base + menuDragTranslation))
+    }
+
+    /// 聊天主界面右划打开侧栏（需明显水平滑动，避免干扰列表上下滚）。
+    private var menuOpenSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .local)
+            .onChanged { value in
+                guard isChatStage, vm.managementDestination == nil, !vm.showSideMenu else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard dx > 0, abs(dx) > abs(dy) * 1.15 else { return }
+                if !isMenuDragging { isMenuDragging = true }
+                menuDragTranslation = dx
+            }
+            .onEnded { value in
+                guard isMenuDragging else { return }
+                finishMenuDrag(value)
+            }
+    }
+
+    /// 侧栏打开后左划关闭。
+    private var menuCloseDragGesture: some Gesture {
+        DragGesture(minimumDistance: 10, coordinateSpace: .local)
+            .onChanged { value in
+                guard isChatStage, vm.showSideMenu || isMenuDragging else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) >= abs(dy) * 0.85 else { return }
+                if !isMenuDragging { isMenuDragging = true }
+                menuDragTranslation = min(0, dx)
+            }
+            .onEnded { value in
+                guard isMenuDragging else { return }
+                finishMenuDrag(value)
+            }
+    }
+
+    private func finishMenuDrag(_ value: DragGesture.Value) {
+        let dx = value.translation.width
+        let predicted = value.predictedEndTranslation.width
+        let threshold = menuWidthCache * 0.28
+        let shouldOpen: Bool
+
+        if vm.showSideMenu {
+            shouldOpen = !(dx < -threshold || predicted < -menuWidthCache * 0.45)
+        } else {
+            shouldOpen = dx > threshold || predicted > menuWidthCache * 0.45
+        }
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+            vm.showSideMenu = shouldOpen
+            menuDragTranslation = 0
+            isMenuDragging = false
+        }
+    }
+
+    private func closeSideMenu() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+            vm.showSideMenu = false
+            menuDragTranslation = 0
+            isMenuDragging = false
+        }
     }
 
     @ViewBuilder
@@ -126,5 +226,57 @@ struct CenterStatusView: View {
                 .foregroundStyle(EATheme.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct ManagementBackButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("返回")
+                    .font(.system(size: 16))
+            }
+            .foregroundStyle(EATheme.blue)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct ComingSoonManagementView: View {
+    @EnvironmentObject private var appVM: EasyAccountViewModel
+
+    let title: String
+    let systemImage: String
+    let message: String
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Spacer()
+                Image(systemName: systemImage)
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundStyle(EATheme.tertiary)
+                Text(message)
+                    .font(.system(size: 15))
+                    .foregroundStyle(EATheme.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(EATheme.background.ignoresSafeArea())
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    ManagementBackButton { appVM.closeManagement() }
+                }
+            }
+        }
     }
 }
