@@ -35,6 +35,15 @@ struct EasyAccountRootView: View {
                 sideMenuLayer
             }
 
+            if isChatStage, vm.managementDestination == nil {
+                ConnectionStatusDot(state: connectionDotState)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 14)
+                    .padding(.trailing, 16)
+                    .allowsHitTesting(false)
+                    .zIndex(4)
+            }
+
             if !vm.toastMessage.isEmpty {
                 toastBanner
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -83,6 +92,16 @@ struct EasyAccountRootView: View {
 
     private var isChatStage: Bool {
         vm.stage == .live || vm.stage == .connecting
+    }
+
+    private var connectionDotState: ConnectionStatusDot.State {
+        if vm.connected {
+            return .connected
+        }
+        if vm.stage == .connecting || vm.stage == .live {
+            return .connecting
+        }
+        return .disconnected
     }
 
     private var revealedMenuProgress: CGFloat {
