@@ -1,8 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
     @FocusState private var inputFocused: Bool
+    @StateObject private var speech = SpeechInputController()
+    @State private var voiceMode = false
+    @State private var isHoldPressing = false
 
     private let suggestions = [
         "今天午饭花了 35 元",
@@ -149,23 +153,38 @@ struct ChatView: View {
             .buttonStyle(PressableButtonStyle())
 
             HStack(spacing: 8) {
-                TextField(
-                    vm.waitingReply ? "助手正在回复…" : "随便问，记账、图片也可以",
-                    text: $vm.inputText,
-                    axis: .vertical
-                )
-                .lineLimit(1...5)
-                .disabled(vm.waitingReply || !vm.connected)
-                .focused($inputFocused)
-                .font(.system(size: 16))
-                .foregroundStyle(EATheme.label)
-                .onSubmit {
-                    sendFromComposer()
+                if voiceMode {
+                    holdToTalkArea
+                } else {
+                    TextField(
+                        vm.waitingReply ? "助手正在回复…" : "随便问，记账、图片也可以",
+                        text: $vm.inputText,
+                        axis: .vertical
+                    )
+                    .lineLimit(1...5)
+                    .disabled(vm.waitingReply || !vm.connected)
+                    .focused($inputFocused)
+                    .font(.system(size: 16))
+                    .foregroundStyle(EATheme.label)
+                    .onSubmit {
+                        sendFromComposer()
+                    }
                 }
 
-                if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if voiceMode {
                     Button {
-                        vm.showToast("语音输入即将开放")
+                        exitVoiceMode()
+                    } label: {
+                        Image(systemName: "keyboard")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(EATheme.secondary)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(speech.isListening)
+                } else if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        Task { await enterVoiceMode() }
                     } label: {
                         Image(systemName: "waveform")
                             .font(.system(size: 18, weight: .semibold))
@@ -173,6 +192,7 @@ struct ChatView: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
+                    .disabled(vm.waitingReply || !vm.connected)
                 } else {
                     Button {
                         sendFromComposer()
@@ -186,7 +206,7 @@ struct ChatView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, voiceMode ? 8 : 10)
             .background(EATheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
@@ -194,6 +214,106 @@ struct ChatView: View {
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
+        .onDisappear {
+            if speech.isListening {
+                speech.cancel()
+            }
+        }
+    }
+
+    private var holdToTalkArea: some View {
+        Text(holdToTalkTitle)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(isHoldPressing ? Color.white : EATheme.label)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(isHoldPressing ? EATheme.blue : EATheme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !isHoldPressing else { return }
+                        beginHoldToTalk()
+                    }
+                    .onEnded { _ in
+                        endHoldToTalk()
+                    }
+            )
+            .disabled(vm.waitingReply || !vm.connected)
+            .opacity(vm.waitingReply || !vm.connected ? 0.45 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHoldPressing)
+    }
+
+    private var holdToTalkTitle: String {
+        if isHoldPressing {
+            let partial = speech.partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return partial.isEmpty ? "松开 结束" : partial
+        }
+        return "按住 说话"
+    }
+
+    private func enterVoiceMode() async {
+        dismissKeyboard()
+        let allowed = await speech.requestPermissions()
+        guard allowed else {
+            vm.showToast(SpeechInputError.permissionDenied.localizedDescription)
+            return
+        }
+        guard speech.isAvailable else {
+            vm.showToast(SpeechInputError.recognizerUnavailable.localizedDescription)
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            voiceMode = true
+        }
+    }
+
+    private func exitVoiceMode() {
+        if speech.isListening {
+            speech.cancel()
+        }
+        isHoldPressing = false
+        withAnimation(.easeInOut(duration: 0.15)) {
+            voiceMode = false
+        }
+        inputFocused = true
+    }
+
+    private func beginHoldToTalk() {
+        guard vm.connected, !vm.waitingReply else { return }
+        isHoldPressing = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        do {
+            try speech.start()
+        } catch {
+            isHoldPressing = false
+            vm.showToast((error as? LocalizedError)?.errorDescription ?? "无法开始语音识别")
+        }
+    }
+
+    private func endHoldToTalk() {
+        guard isHoldPressing else { return }
+        let spoken = speech.stop()
+        isHoldPressing = false
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+
+        let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            vm.showToast("没有识别到内容，请再试一次")
+            return
+        }
+
+        if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            vm.inputText = text
+        } else {
+            vm.inputText += text
+        }
+        // 回到键盘模式，方便改字后发送
+        withAnimation(.easeInOut(duration: 0.15)) {
+            voiceMode = false
+        }
+        inputFocused = true
     }
 
     private var dismissKeyboardDrag: some Gesture {
@@ -217,18 +337,18 @@ struct ChatView: View {
 
 /// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
 struct ConnectionStatusDot: View {
-    enum State: Equatable {
+    enum Kind: Equatable {
         case connected
         case connecting
         case disconnected
     }
 
-    let state: State
+    let kind: Kind
 
     @State private var blinkBright = false
 
     private var dotColor: Color {
-        switch state {
+        switch kind {
         case .connected: return EATheme.green
         case .connecting: return Color(red: 1.0, green: 0.78, blue: 0.12)
         case .disconnected: return EATheme.danger
@@ -236,7 +356,7 @@ struct ConnectionStatusDot: View {
     }
 
     private var accessibilityText: String {
-        switch state {
+        switch kind {
         case .connected: return "已连接"
         case .connecting: return "连接中"
         case .disconnected: return "已断开"
@@ -280,13 +400,13 @@ struct ConnectionStatusDot: View {
         .frame(width: 22, height: 22)
         .accessibilityLabel(accessibilityText)
         .onAppear { updateBlink() }
-        .onChange(of: state) { _, _ in
+        .onChange(of: kind) { _, _ in
             updateBlink()
         }
     }
 
     private var glowOpacity: Double {
-        switch state {
+        switch kind {
         case .connected: return 0.85
         case .connecting: return blinkBright ? 1.0 : 0.2
         case .disconnected: return 0.7
@@ -294,7 +414,7 @@ struct ConnectionStatusDot: View {
     }
 
     private var coreOpacity: Double {
-        switch state {
+        switch kind {
         case .connected, .disconnected: return 1
         case .connecting: return blinkBright ? 1.0 : 0.28
         }
@@ -302,7 +422,7 @@ struct ConnectionStatusDot: View {
 
     private func updateBlink() {
         blinkBright = false
-        guard state == .connecting else { return }
+        guard kind == .connecting else { return }
         withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
             blinkBright = true
         }
