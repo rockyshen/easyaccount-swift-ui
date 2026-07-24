@@ -65,6 +65,8 @@ final class EasyAccountViewModel: ObservableObject {
 
     @Published var currentUser: AuthUser?
     @Published var connected: Bool = false
+    /// 正在发起 WS 握手（含重连）；仅此阶段状态灯为黄色。
+    @Published private(set) var isSocketConnecting: Bool = false
     @Published var messages: [ChatMessage] = []
     @Published var inputText: String = ""
     @Published var waitingReply: Bool = false
@@ -398,14 +400,17 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func connectWs() {
         guard !token.isEmpty else {
+            isSocketConnecting = false
             Task { await forceToLogin("请先登录") }
             return
         }
         reconnectTask?.cancel()
         if stage != .live { stage = .connecting }
         connected = false
+        isSocketConnecting = true
 
         guard let url = AuthService.buildChatWsUrl(wsUrl: wsUrl, token: token) else {
+            isSocketConnecting = false
             stage = .login
             authError = "无法创建连接，请检查地址"
             return
@@ -417,6 +422,7 @@ final class EasyAccountViewModel: ObservableObject {
         switch msg.type {
         case .connected:
             connected = true
+            isSocketConnecting = false
             stage = .live
             reconnectAttempts = 0
             // 重连成功不往对话里插系统提示，保持无感知
@@ -484,6 +490,7 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func handleSocketClosed() {
         connected = false
+        isSocketConnecting = false
         if socket.wasIntentionalClose { return }
         guard !handlingClose else { return }
         handlingClose = true
@@ -565,6 +572,7 @@ final class EasyAccountViewModel: ObservableObject {
         messages = []
         authError = ""
         connected = false
+        isSocketConnecting = false
         waitingReply = false
         inputText = ""
         streamingMsgId = nil

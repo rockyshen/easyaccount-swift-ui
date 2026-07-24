@@ -98,7 +98,7 @@ struct EasyAccountRootView: View {
         if vm.connected {
             return .connected
         }
-        if vm.stage == .connecting || vm.stage == .live {
+        if vm.isSocketConnecting {
             return .connecting
         }
         return .disconnected
