@@ -22,6 +22,17 @@
 		A1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* Assets.xcassets */; };
 		A1000000000000000000000E /* SideMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* SideMenuView.swift */; };
 		A1000000000000000000000F /* AppearancePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* AppearancePicker.swift */; };
+		A10000000000000000000011 /* AccountModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* AccountModels.swift */; };
+		A10000000000000000000012 /* CatalogModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* CatalogModels.swift */; };
+		A10000000000000000000013 /* DashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* DashboardModels.swift */; };
+		A10000000000000000000014 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* APIClient.swift */; };
+		A10000000000000000000015 /* MoneyFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* MoneyFormat.swift */; };
+		A10000000000000000000016 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* AccountService.swift */; };
+		A10000000000000000000017 /* CatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* CatalogService.swift */; };
+		A10000000000000000000018 /* DashboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* DashboardService.swift */; };
+		A10000000000000000000019 /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* AccountsView.swift */; };
+		A1000000000000000000001A /* CategoriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* CategoriesView.swift */; };
+		A1000000000000000000001B /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001B /* DashboardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +52,17 @@
 		A2000000000000000000000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000000000000000000000F /* SideMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenuView.swift; sourceTree = "<group>"; };
 		A20000000000000000000010 /* AppearancePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearancePicker.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* AccountModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* CatalogModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* DashboardModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* MoneyFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoneyFormat.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* CatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogService.swift; sourceTree = "<group>"; };
+		A20000000000000000000018 /* DashboardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardService.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
+		A2000000000000000000001A /* CategoriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoriesView.swift; sourceTree = "<group>"; };
+		A2000000000000000000001B /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* AccountAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AccountAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -92,6 +114,9 @@
 			children = (
 				A20000000000000000000003 /* AuthModels.swift */,
 				A20000000000000000000004 /* ChatMessage.swift */,
+				A20000000000000000000011 /* AccountModels.swift */,
+				A20000000000000000000012 /* CatalogModels.swift */,
+				A20000000000000000000013 /* DashboardModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -102,6 +127,11 @@
 				A20000000000000000000005 /* SessionStore.swift */,
 				A20000000000000000000006 /* AuthService.swift */,
 				A20000000000000000000007 /* ChatWebSocket.swift */,
+				A20000000000000000000014 /* APIClient.swift */,
+				A20000000000000000000015 /* MoneyFormat.swift */,
+				A20000000000000000000016 /* AccountService.swift */,
+				A20000000000000000000017 /* CatalogService.swift */,
+				A20000000000000000000018 /* DashboardService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -130,6 +160,9 @@
 				A2000000000000000000000C /* ChatView.swift */,
 				A2000000000000000000000F /* SideMenuView.swift */,
 				A20000000000000000000010 /* AppearancePicker.swift */,
+				A20000000000000000000019 /* AccountsView.swift */,
+				A2000000000000000000001A /* CategoriesView.swift */,
+				A2000000000000000000001B /* DashboardView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -218,6 +251,17 @@
 				A1000000000000000000000C /* ChatView.swift in Sources */,
 				A1000000000000000000000E /* SideMenuView.swift in Sources */,
 				A1000000000000000000000F /* AppearancePicker.swift in Sources */,
+				A10000000000000000000011 /* AccountModels.swift in Sources */,
+				A10000000000000000000012 /* CatalogModels.swift in Sources */,
+				A10000000000000000000013 /* DashboardModels.swift in Sources */,
+				A10000000000000000000014 /* APIClient.swift in Sources */,
+				A10000000000000000000015 /* MoneyFormat.swift in Sources */,
+				A10000000000000000000016 /* AccountService.swift in Sources */,
+				A10000000000000000000017 /* CatalogService.swift in Sources */,
+				A10000000000000000000018 /* DashboardService.swift in Sources */,
+				A10000000000000000000019 /* AccountsView.swift in Sources */,
+				A1000000000000000000001A /* CategoriesView.swift in Sources */,
+				A1000000000000000000001B /* DashboardView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
