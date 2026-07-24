@@ -35,6 +35,15 @@ struct EasyAccountRootView: View {
                 sideMenuLayer
             }
 
+            if isChatStage, vm.managementDestination == nil {
+                ConnectionStatusDot(state: connectionDotState)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 14)
+                    .padding(.trailing, 16)
+                    .allowsHitTesting(false)
+                    .zIndex(4)
+            }
+
             if !vm.toastMessage.isEmpty {
                 toastBanner
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -85,6 +94,17 @@ struct EasyAccountRootView: View {
         vm.stage == .live || vm.stage == .connecting
     }
 
+    private var connectionDotState: ConnectionStatusDot.State {
+        if vm.connected {
+            return .connected
+        }
+        if vm.stage == .connecting || vm.stage == .live {
+            return .connecting
+        }
+        return .disconnected
+    }
+
+    /// GeometryReader 只包侧栏，避免把聊天主界面锁死在固定高度，导致键盘无法把输入区顶起。
     private var revealedMenuProgress: CGFloat {
         let closed = -menuWidthCache - 8
         let current = resolvedMenuOffset(menuWidth: menuWidthCache)

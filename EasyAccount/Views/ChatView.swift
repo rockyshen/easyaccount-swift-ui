@@ -48,19 +48,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
 
-            Spacer()
-
-            if !vm.connected {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(EATheme.orange)
-                        .frame(width: 7, height: 7)
-                    Text("连接中")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(EATheme.secondary)
-                }
-                .padding(.trailing, 8)
-            }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -224,6 +212,100 @@ struct ChatView: View {
         guard vm.canSend else { return }
         dismissKeyboard()
         vm.sendChat()
+    }
+}
+
+/// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
+struct ConnectionStatusDot: View {
+    enum State: Equatable {
+        case connected
+        case connecting
+        case disconnected
+    }
+
+    let state: State
+
+    @State private var blinkBright = false
+
+    private var dotColor: Color {
+        switch state {
+        case .connected: return EATheme.green
+        case .connecting: return Color(red: 1.0, green: 0.78, blue: 0.12)
+        case .disconnected: return EATheme.danger
+        }
+    }
+
+    private var accessibilityText: String {
+        switch state {
+        case .connected: return "已连接"
+        case .connecting: return "连接中"
+        case .disconnected: return "已断开"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            // 外层柔光
+            Circle()
+                .fill(dotColor.opacity(0.55))
+                .frame(width: 16, height: 16)
+                .blur(radius: 4.5)
+                .opacity(glowOpacity)
+
+            // 中层光晕
+            Circle()
+                .fill(dotColor.opacity(0.35))
+                .frame(width: 12, height: 12)
+                .blur(radius: 1.2)
+                .opacity(glowOpacity)
+
+            // 实心圆点 + 高光
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.95),
+                            dotColor,
+                            dotColor.opacity(0.85)
+                        ],
+                        center: UnitPoint(x: 0.32, y: 0.28),
+                        startRadius: 0,
+                        endRadius: 6
+                    )
+                )
+                .frame(width: 8, height: 8)
+                .shadow(color: dotColor.opacity(0.85), radius: 4.5, x: 0, y: 0)
+                .opacity(coreOpacity)
+        }
+        .frame(width: 22, height: 22)
+        .accessibilityLabel(accessibilityText)
+        .onAppear { updateBlink() }
+        .onChange(of: state) { _, _ in
+            updateBlink()
+        }
+    }
+
+    private var glowOpacity: Double {
+        switch state {
+        case .connected: return 0.85
+        case .connecting: return blinkBright ? 1.0 : 0.2
+        case .disconnected: return 0.7
+        }
+    }
+
+    private var coreOpacity: Double {
+        switch state {
+        case .connected, .disconnected: return 1
+        case .connecting: return blinkBright ? 1.0 : 0.28
+        }
+    }
+
+    private func updateBlink() {
+        blinkBright = false
+        guard state == .connecting else { return }
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+            blinkBright = true
+        }
     }
 }
 
