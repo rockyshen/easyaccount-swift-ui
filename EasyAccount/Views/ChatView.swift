@@ -217,18 +217,18 @@ struct ChatView: View {
 
 /// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
 struct ConnectionStatusDot: View {
-    enum State: Equatable {
+    enum Kind: Equatable {
         case connected
         case connecting
         case disconnected
     }
 
-    let state: State
+    let kind: Kind
 
     @State private var blinkBright = false
 
     private var dotColor: Color {
-        switch state {
+        switch kind {
         case .connected: return EATheme.green
         case .connecting: return Color(red: 1.0, green: 0.78, blue: 0.12)
         case .disconnected: return EATheme.danger
@@ -236,7 +236,7 @@ struct ConnectionStatusDot: View {
     }
 
     private var accessibilityText: String {
-        switch state {
+        switch kind {
         case .connected: return "已连接"
         case .connecting: return "连接中"
         case .disconnected: return "已断开"
@@ -280,13 +280,13 @@ struct ConnectionStatusDot: View {
         .frame(width: 22, height: 22)
         .accessibilityLabel(accessibilityText)
         .onAppear { updateBlink() }
-        .onChange(of: state) { _, _ in
+        .onChange(of: kind) { _, _ in
             updateBlink()
         }
     }
 
     private var glowOpacity: Double {
-        switch state {
+        switch kind {
         case .connected: return 0.85
         case .connecting: return blinkBright ? 1.0 : 0.2
         case .disconnected: return 0.7
@@ -294,7 +294,7 @@ struct ConnectionStatusDot: View {
     }
 
     private var coreOpacity: Double {
-        switch state {
+        switch kind {
         case .connected, .disconnected: return 1
         case .connecting: return blinkBright ? 1.0 : 0.28
         }
@@ -302,7 +302,7 @@ struct ConnectionStatusDot: View {
 
     private func updateBlink() {
         blinkBright = false
-        guard state == .connecting else { return }
+        guard kind == .connecting else { return }
         withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
             blinkBright = true
         }
