@@ -39,8 +39,25 @@ struct EasyAccountRootView: View {
         .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
         .background(EATheme.background.ignoresSafeArea())
         .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
+        .fullScreenCover(item: $vm.managementDestination) { destination in
+            managementPage(for: destination)
+                .environmentObject(vm)
+                .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
+        }
         .onAppear { vm.onAppear() }
         .onDisappear { vm.onDisappear() }
+    }
+
+    @ViewBuilder
+    private func managementPage(for destination: ManagementDestination) -> some View {
+        switch destination {
+        case .accounts:
+            AccountsView(appVM: vm)
+        case .categories:
+            CategoriesView(appVM: vm)
+        case .dashboard:
+            DashboardView(appVM: vm)
+        }
     }
 
     private var isChatStage: Bool {
