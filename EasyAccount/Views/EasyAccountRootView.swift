@@ -36,7 +36,7 @@ struct EasyAccountRootView: View {
             }
 
             if isChatStage, vm.managementDestination == nil {
-                ConnectionStatusDot(state: connectionDotState)
+                ConnectionStatusDot(kind: connectionDotKind)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, 14)
                     .padding(.trailing, 16)
@@ -94,7 +94,7 @@ struct EasyAccountRootView: View {
         vm.stage == .live || vm.stage == .connecting
     }
 
-    private var connectionDotState: ConnectionStatusDot.State {
+    private var connectionDotKind: ConnectionStatusDot.Kind {
         if vm.connected {
             return .connected
         }
