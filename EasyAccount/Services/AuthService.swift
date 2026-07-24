@@ -9,7 +9,7 @@ enum AuthService {
 
     static func httpBaseFromWs(_ wsUrl: String) -> String {
         let raw = stripTrailingSlash(wsUrl)
-        if raw.isEmpty { return "http://127.0.0.1:8088" }
+        if raw.isEmpty { return AppConfig.defaultHttpURL }
         if raw.hasPrefix("wss://") { return "https://" + raw.dropFirst(6) }
         if raw.hasPrefix("ws://") { return "http://" + raw.dropFirst(5) }
         if raw.hasPrefix("https://") || raw.hasPrefix("http://") { return raw }
@@ -24,7 +24,7 @@ enum AuthService {
 
     static func buildChatWsUrl(wsUrl: String, token: String) -> URL? {
         let base = stripTrailingSlash(wsUrl)
-        let fallback = base.isEmpty ? "ws://127.0.0.1:8088" : base
+        let fallback = base.isEmpty ? AppConfig.defaultWsURL : base
         var components = URLComponents(string: "\(fallback)/ws")
         components?.queryItems = [URLQueryItem(name: "token", value: token)]
         return components?.url
