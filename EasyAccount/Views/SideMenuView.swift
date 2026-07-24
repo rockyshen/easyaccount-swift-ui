@@ -84,6 +84,28 @@ struct SideMenuView: View {
         }
     }
 
+    private func menuRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(EATheme.label)
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(EATheme.label)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(EATheme.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+    }
+
     private var avatarInitial: String {
         let name = vm.displayUserName
         return name.isEmpty ? "账" : String(name.prefix(1))

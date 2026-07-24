@@ -57,7 +57,6 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var countryCode: String = "+86"
     @Published var toastMessage: String = ""
     @Published var showSideMenu: Bool = false
-    @Published var menuSearch: String = ""
     @Published var managementDestination: ManagementDestination?
     @Published var appearanceMode: AppearanceMode
 
