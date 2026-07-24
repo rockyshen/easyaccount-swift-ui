@@ -104,7 +104,6 @@ struct EasyAccountRootView: View {
         return .disconnected
     }
 
-    /// GeometryReader 只包侧栏，避免把聊天主界面锁死在固定高度，导致键盘无法把输入区顶起。
     private var revealedMenuProgress: CGFloat {
         let closed = -menuWidthCache - 8
         let current = resolvedMenuOffset(menuWidth: menuWidthCache)
