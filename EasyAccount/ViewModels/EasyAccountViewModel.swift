@@ -386,6 +386,7 @@ final class EasyAccountViewModel: ObservableObject {
         token = ""
         currentUser = nil
         managementDestination = nil
+        ManagementCache.clear()
         resetChatState()
         authMode = .login
         loginRoute = .landing
@@ -522,6 +523,7 @@ final class EasyAccountViewModel: ObservableObject {
         token = ""
         currentUser = nil
         managementDestination = nil
+        ManagementCache.clear()
         resetChatState()
         stage = .login
         loginRoute = .landing
