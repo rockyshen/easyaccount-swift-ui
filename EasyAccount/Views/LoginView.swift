@@ -335,7 +335,7 @@ struct LoginView: View {
                     if vm.showAdvanced {
                         VStack(alignment: .leading, spacing: 8) {
                             fieldLabel("HTTP Base")
-                            TextField("http://118.25.46.207:8088", text: $vm.httpBase)
+                            TextField("http://118.25.46.207:6088", text: $vm.httpBase)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .font(.system(size: 14))
@@ -345,7 +345,7 @@ struct LoginView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                             fieldLabel("WebSocket")
-                            TextField("ws://118.25.46.207:8088", text: $vm.wsUrl)
+                            TextField("ws://118.25.46.207:6088", text: $vm.wsUrl)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .font(.system(size: 14))
