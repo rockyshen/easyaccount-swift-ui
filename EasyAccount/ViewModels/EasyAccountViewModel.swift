@@ -419,10 +419,7 @@ final class EasyAccountViewModel: ObservableObject {
             connected = true
             stage = .live
             reconnectAttempts = 0
-            // 空会话时用欢迎语，不再推系统灰条打扰首屏
-            if !messages.isEmpty {
-                pushMessage(ChatMessage(id: nextId(), kind: .system, text: msg.content ?? "记账助手已连接"))
-            }
+            // 重连成功不往对话里插系统提示，保持无感知
         case .messageDelta:
             if streamingMsgId == nil {
                 let id = nextId()
@@ -483,7 +480,7 @@ final class EasyAccountViewModel: ObservableObject {
             }
 
             if stage == .live {
-                pushMessage(ChatMessage(id: nextId(), kind: .system, text: "连接已断开，正在重连…"))
+                // 断线后后台静默重连，不在对话中展示断开/重连提示
                 let stillValid = await checkSessionStillValid()
                 if !stillValid {
                     await forceToLogin("会话已失效（可能被其他设备登录踢下线）")
