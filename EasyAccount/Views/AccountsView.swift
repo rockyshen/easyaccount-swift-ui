@@ -25,18 +25,42 @@ final class AccountsViewModel: ObservableObject {
         self.onToast = onToast
     }
 
-    func load() async {
-        loading = true
+    func load(force: Bool = false) async {
+        // 先用缓存秒开，避免每次进入都白屏转圈
+        if !ManagementCache.accounts.isEmpty {
+            accounts = ManagementCache.accounts
+        }
+
+        if ManagementCache.hasAccountsCache(force: force) {
+            errorMessage = ""
+            return
+        }
+
+        let showSpinner = accounts.isEmpty
+        if showSpinner {
+            loading = true
+        }
         errorMessage = ""
-        defer { loading = false }
+        defer { if showSpinner { loading = false } }
+
         do {
-            accounts = try await AccountService.list(httpBase: httpBase(), token: token())
+            let list = try await AccountService.list(httpBase: httpBase(), token: token())
+            ManagementCache.setAccounts(list)
+            accounts = list
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
         } catch let error as APIError {
-            errorMessage = error.message
+            if accounts.isEmpty {
+                errorMessage = error.message
+            } else {
+                onToast(error.message)
+            }
         } catch {
-            errorMessage = "加载账户失败"
+            if accounts.isEmpty {
+                errorMessage = "加载账户失败"
+            } else {
+                onToast("加载账户失败")
+            }
         }
     }
 
@@ -87,7 +111,9 @@ final class AccountsViewModel: ObservableObject {
                     note: editor.note,
                     accountType: editor.accountType
                 )
-                _ = try await AccountService.create(httpBase: httpBase(), token: token(), request: body)
+                let created = try await AccountService.create(httpBase: httpBase(), token: token(), request: body)
+                ManagementCache.upsertAccount(created)
+                accounts = ManagementCache.accounts
                 onToast("账户已创建")
             case .edit(let account):
                 var exemptMoney: String?
@@ -105,16 +131,17 @@ final class AccountsViewModel: ObservableObject {
                     note: editor.note,
                     exemptMoney: exemptMoney
                 )
-                _ = try await AccountService.update(
+                let updated = try await AccountService.update(
                     httpBase: httpBase(),
                     token: token(),
                     id: account.id,
                     request: body
                 )
+                ManagementCache.upsertAccount(updated)
+                accounts = ManagementCache.accounts
                 onToast("账户已更新")
             }
             self.editor = nil
-            await load()
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
         } catch let error as APIError {
@@ -127,6 +154,7 @@ final class AccountsViewModel: ObservableObject {
     func delete(_ account: AccountDTO) async {
         do {
             try await AccountService.delete(httpBase: httpBase(), token: token(), id: account.id)
+            ManagementCache.removeAccount(id: account.id)
             accounts.removeAll { $0.id == account.id }
             onToast("账户已删除")
         } catch let error as APIError where error.status == 401 {
@@ -241,7 +269,7 @@ struct AccountsView: View {
                 }
             }
             .task { await vm.load() }
-            .refreshable { await vm.load() }
+            .refreshable { await vm.load(force: true) }
             .sheet(item: $vm.editor) { editor in
                 AccountEditorSheet(
                     editor: Binding(
@@ -310,7 +338,7 @@ struct AccountsView: View {
                 .foregroundStyle(EATheme.danger)
                 .multilineTextAlignment(.center)
             Button("重试") {
-                Task { await vm.load() }
+                Task { await vm.load(force: true) }
             }
             .foregroundStyle(EATheme.blue)
         }
