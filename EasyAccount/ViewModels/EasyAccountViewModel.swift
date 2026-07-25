@@ -79,6 +79,10 @@ final class EasyAccountViewModel: ObservableObject {
     private var sessionInvalidHandled = false
     private var handlingClose = false
     private var toastTask: Task<Void, Never>?
+    private var replyTimeoutTask: Task<Void, Never>?
+
+    /// 等待助手回复的最长时长，超时后解锁输入，避免永久卡住。
+    private let replyTimeoutNanoseconds: UInt64 = 60_000_000_000
 
     var canSubmitAuth: Bool {
         let name = loginName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +106,18 @@ final class EasyAccountViewModel: ObservableObject {
 
     var canSend: Bool {
         connected && !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 输入框占位：回复中 / 断连 / 常态。
+    var composerPlaceholder: String {
+        if waitingReply { return "助手正在回复…" }
+        if !connected { return "连接断开，可先输入，恢复后发送" }
+        return "随便问，记账、图片也可以"
+    }
+
+    /// 仅在等待回复时锁输入；断连时仍可编辑草稿。
+    var isComposerEditingDisabled: Bool {
+        waitingReply
     }
 
     var displayUserName: String {
@@ -220,12 +236,19 @@ final class EasyAccountViewModel: ObservableObject {
 
     func sendChat() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, connected, !waitingReply else { return }
-        socket.sendChat(text)
+        guard !text.isEmpty, !waitingReply else { return }
+        guard connected else {
+            // 保留输入内容，提示用户待恢复后再发，避免假发送后卡住。
+            showToast("当前未连接，请稍后再发")
+            return
+        }
+        guard socket.sendChat(text) else {
+            showToast("发送失败，请稍后再试")
+            return
+        }
         pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
         inputText = ""
-        waitingReply = true
-        streamingMsgId = nil
+        beginWaitingReply()
     }
 
     func sendSuggestion(_ text: String) {
@@ -457,7 +480,7 @@ final class EasyAccountViewModel: ObservableObject {
             } else if let content = msg.content, !content.isEmpty, !isConnectionStatusNoise(content) {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
-            waitingReply = false
+            endWaitingReply()
         case .error:
             let text = msg.message ?? "发生错误"
             if !isConnectionStatusNoise(text) {
@@ -467,7 +490,7 @@ final class EasyAccountViewModel: ObservableObject {
                 messages[idx].streaming = false
                 streamingMsgId = nil
             }
-            waitingReply = false
+            endWaitingReply()
         }
     }
 
@@ -491,6 +514,10 @@ final class EasyAccountViewModel: ObservableObject {
     private func handleSocketClosed() {
         connected = false
         isSocketConnecting = false
+        // 断连时若仍在等待回复，必须解锁输入，否则重连后会永久卡在「助手正在回复」。
+        let interruptedReply = waitingReply || streamingMsgId != nil
+        finishInterruptedReply(showToast: interruptedReply && !socket.wasIntentionalClose)
+
         if socket.wasIntentionalClose { return }
         guard !handlingClose else { return }
         handlingClose = true
@@ -537,6 +564,44 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
+    private func beginWaitingReply() {
+        waitingReply = true
+        streamingMsgId = nil
+        replyTimeoutTask?.cancel()
+        replyTimeoutTask = Task { [replyTimeoutNanoseconds] in
+            try? await Task.sleep(nanoseconds: replyTimeoutNanoseconds)
+            guard !Task.isCancelled else { return }
+            guard waitingReply else { return }
+            finishInterruptedReply(showToast: true, toast: "回复超时，请重试")
+        }
+    }
+
+    private func endWaitingReply() {
+        waitingReply = false
+        replyTimeoutTask?.cancel()
+        replyTimeoutTask = nil
+    }
+
+    /// 中断进行中的回复：结束 streaming、解锁输入，必要时 toast 提示重试。
+    private func finishInterruptedReply(
+        showToast: Bool,
+        toast: String = "连接中断，请重新发送"
+    ) {
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            let text = messages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                messages.remove(at: idx)
+            } else {
+                messages[idx].streaming = false
+            }
+        }
+        streamingMsgId = nil
+        endWaitingReply()
+        if showToast {
+            self.showToast(toast)
+        }
+    }
+
     private func checkSessionStillValid() async -> Bool {
         guard !token.isEmpty else { return false }
         do {
@@ -573,7 +638,7 @@ final class EasyAccountViewModel: ObservableObject {
         authError = ""
         connected = false
         isSocketConnecting = false
-        waitingReply = false
+        endWaitingReply()
         inputText = ""
         streamingMsgId = nil
     }
