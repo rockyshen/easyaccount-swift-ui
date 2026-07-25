@@ -215,7 +215,7 @@ struct CategoriesView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .contentMargins(.top, 0, .scrollContent)
+            .contentMargins(.top, 0, for: .scrollContent)
         }
     }
 
