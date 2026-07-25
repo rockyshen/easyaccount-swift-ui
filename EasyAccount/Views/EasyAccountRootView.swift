@@ -10,6 +10,10 @@ struct EasyAccountRootView: View {
     @State private var menuWidthCache: CGFloat = 280
     @State private var isMenuDragging = false
 
+    /// 管理子页右划返回时的水平位移。
+    @State private var managementDragOffset: CGFloat = 0
+    @State private var isManagementDragging = false
+
     var body: some View {
         ZStack(alignment: .leading) {
             EATheme.background.ignoresSafeArea()
@@ -55,6 +59,8 @@ struct EasyAccountRootView: View {
             if let destination = vm.managementDestination {
                 managementPage(for: destination)
                     .environmentObject(vm)
+                    .offset(x: max(0, managementDragOffset))
+                    .simultaneousGesture(managementBackSwipeGesture)
                     .transition(
                         .asymmetric(
                             insertion: .move(edge: .trailing),
@@ -62,10 +68,15 @@ struct EasyAccountRootView: View {
                         )
                     )
                     .zIndex(5)
+                    .id(destination)
+                    .onAppear { resetManagementDrag() }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: vm.toastMessage.isEmpty)
-        .animation(.spring(response: 0.34, dampingFraction: 0.9), value: vm.managementDestination)
+        .animation(
+            isManagementDragging ? nil : .spring(response: 0.34, dampingFraction: 0.9),
+            value: vm.managementDestination
+        )
         .background(EATheme.background.ignoresSafeArea())
         .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
         .onAppear { vm.onAppear() }
@@ -202,6 +213,51 @@ struct EasyAccountRootView: View {
         }
     }
 
+    /// 管理子页从左缘右划返回（自定义覆盖层，无系统 interactive pop）。
+    private var managementBackSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { value in
+                guard vm.managementDestination != nil else { return }
+                // 仅左缘起手，避免与横向列表/分类滚动冲突。
+                guard value.startLocation.x <= 28 || isManagementDragging else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard dx > 0, abs(dx) > abs(dy) * 1.05 else { return }
+                if !isManagementDragging { isManagementDragging = true }
+                managementDragOffset = dx
+            }
+            .onEnded { value in
+                guard isManagementDragging else { return }
+                let dx = value.translation.width
+                let predicted = value.predictedEndTranslation.width
+                let shouldClose = dx > 88 || predicted > 180
+
+                if shouldClose {
+                    let dismissX = max(UIScreen.main.bounds.width, managementDragOffset + 120)
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        managementDragOffset = dismissX
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            vm.managementDestination = nil
+                        }
+                        resetManagementDrag()
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        resetManagementDrag()
+                    }
+                }
+            }
+    }
+
+    private func resetManagementDrag() {
+        managementDragOffset = 0
+        isManagementDragging = false
+    }
+
     @ViewBuilder
     private var mainContent: some View {
         switch vm.stage {
@@ -248,21 +304,31 @@ struct CenterStatusView: View {
     }
 }
 
-struct ManagementBackButton: View {
+/// 管理页导航栏圆形图标按钮（黑箭头 / 加号等，参考系统浅灰圆底样式）。
+struct ManagementCircleIconButton: View {
+    let systemName: String
+    var fontSize: CGFloat = 16
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                Text("返回")
-                    .font(.system(size: 16))
-            }
-            .foregroundStyle(EATheme.blue)
-            .contentShape(Rectangle())
+            Image(systemName: systemName)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(EATheme.label)
+                .frame(width: 34, height: 34)
+                .background(EATheme.surfaceElevated.opacity(0.92))
+                .clipShape(Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct ManagementBackButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        ManagementCircleIconButton(systemName: "chevron.left", fontSize: 15, action: action)
     }
 }
 
@@ -291,6 +357,7 @@ struct ComingSoonManagementView: View {
             .background(EATheme.background.ignoresSafeArea())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
