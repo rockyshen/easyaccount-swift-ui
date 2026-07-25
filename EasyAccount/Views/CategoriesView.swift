@@ -148,6 +148,7 @@ struct CategoriesView: View {
             .background(EATheme.background.ignoresSafeArea())
             .navigationTitle("分类管理")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
