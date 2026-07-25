@@ -28,6 +28,7 @@
 		A10000000000000000000014 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* APIClient.swift */; };
 		A10000000000000000000015 /* MoneyFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* MoneyFormat.swift */; };
 		A1000000000000000000001C /* ManagementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001C /* ManagementCache.swift */; };
+		A1000000000000000000001D /* SpeechInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001D /* SpeechInputController.swift */; };
 		A10000000000000000000016 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* AccountService.swift */; };
 		A10000000000000000000017 /* CatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* CatalogService.swift */; };
 		A10000000000000000000018 /* DashboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* DashboardService.swift */; };
@@ -59,6 +60,7 @@
 		A20000000000000000000014 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		A20000000000000000000015 /* MoneyFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoneyFormat.swift; sourceTree = "<group>"; };
 		A2000000000000000000001C /* ManagementCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementCache.swift; sourceTree = "<group>"; };
+		A2000000000000000000001D /* SpeechInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechInputController.swift; sourceTree = "<group>"; };
 		A20000000000000000000016 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
 		A20000000000000000000017 /* CatalogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogService.swift; sourceTree = "<group>"; };
 		A20000000000000000000018 /* DashboardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardService.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				A20000000000000000000014 /* APIClient.swift */,
 				A20000000000000000000015 /* MoneyFormat.swift */,
 				A2000000000000000000001C /* ManagementCache.swift */,
+				A2000000000000000000001D /* SpeechInputController.swift */,
 				A20000000000000000000016 /* AccountService.swift */,
 				A20000000000000000000017 /* CatalogService.swift */,
 				A20000000000000000000018 /* DashboardService.swift */,
@@ -260,6 +263,7 @@
 				A10000000000000000000014 /* APIClient.swift in Sources */,
 				A10000000000000000000015 /* MoneyFormat.swift in Sources */,
 				A1000000000000000000001C /* ManagementCache.swift in Sources */,
+				A1000000000000000000001D /* SpeechInputController.swift in Sources */,
 				A10000000000000000000016 /* AccountService.swift in Sources */,
 				A10000000000000000000017 /* CatalogService.swift in Sources */,
 				A10000000000000000000018 /* DashboardService.swift in Sources */,

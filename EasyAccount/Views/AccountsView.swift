@@ -254,18 +254,15 @@ struct AccountsView: View {
             .background(EATheme.background.ignoresSafeArea())
             .navigationTitle("账户管理")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
+                    ManagementCircleIconButton(systemName: "plus") {
                         vm.openCreate()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .semibold))
                     }
-                    .foregroundStyle(EATheme.blue)
                 }
             }
             .task { await vm.load() }

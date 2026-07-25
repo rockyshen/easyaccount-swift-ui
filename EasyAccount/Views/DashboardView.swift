@@ -62,6 +62,7 @@ struct DashboardView: View {
             .background(EATheme.background.ignoresSafeArea())
             .navigationTitle("概览分析")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }

@@ -53,6 +53,10 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于按住说话，将语音识别为记账文字</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>用于把语音转换成输入框中的文字，方便记账</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
