@@ -80,6 +80,8 @@ final class EasyAccountViewModel: ObservableObject {
     private var handlingClose = false
     private var toastTask: Task<Void, Never>?
     private var replyTimeoutTask: Task<Void, Never>?
+    /// 断连期间缓存的用户消息 id，按入队顺序在重连后逐条发送。
+    private var pendingOutboundIds: [Int] = []
 
     /// 等待助手回复的最长时长，超时后解锁输入，避免永久卡住。
     private let replyTimeoutNanoseconds: UInt64 = 60_000_000_000
@@ -105,13 +107,21 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     var canSend: Bool {
-        connected && !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // 断连也可发送：进入待发送队列，连接恢复后自动推送。
+        !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// 输入框占位：回复中 / 断连 / 常态。
+    var pendingOutboundCount: Int { pendingOutboundIds.count }
+
+    /// 输入框占位：回复中 / 断连排队 / 常态。
     var composerPlaceholder: String {
         if waitingReply { return "助手正在回复…" }
-        if !connected { return "连接断开，可先输入，恢复后发送" }
+        if !connected {
+            if pendingOutboundCount > 0 {
+                return "已缓存 \(pendingOutboundCount) 条，连接后自动发送"
+            }
+            return "连接断开，发送后将排队"
+        }
         return "随便问，记账、图片也可以"
     }
 
@@ -237,18 +247,20 @@ final class EasyAccountViewModel: ObservableObject {
     func sendChat() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !waitingReply else { return }
-        guard connected else {
-            // 保留输入内容，提示用户待恢复后再发，避免假发送后卡住。
-            showToast("当前未连接，请稍后再发")
-            return
-        }
-        guard socket.sendChat(text) else {
-            showToast("发送失败，请稍后再试")
-            return
-        }
-        pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
         inputText = ""
-        beginWaitingReply()
+
+        // 未连接，或仍有排队消息：先入队，保证顺序；连上后由 flush 逐条推送。
+        if !connected || !pendingOutboundIds.isEmpty {
+            enqueuePending(text)
+            if !connected {
+                showToast("已加入待发送，连接恢复后自动发送")
+            } else {
+                flushPendingOutbound()
+            }
+            return
+        }
+
+        dispatchOutbound(text: text, messageId: nil)
     }
 
     func sendSuggestion(_ text: String) {
@@ -448,7 +460,8 @@ final class EasyAccountViewModel: ObservableObject {
             isSocketConnecting = false
             stage = .live
             reconnectAttempts = 0
-            // 重连成功不往对话里插系统提示，保持无感知
+            // 重连成功不往对话里插系统提示；若有缓存消息则按序推送。
+            flushPendingOutbound()
         case .messageDelta:
             let chunk = msg.content ?? ""
             // 服务端偶发把重连文案当消息流下发，直接忽略
@@ -481,6 +494,7 @@ final class EasyAccountViewModel: ObservableObject {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
             endWaitingReply()
+            flushPendingOutbound()
         case .error:
             let text = msg.message ?? "发生错误"
             if !isConnectionStatusNoise(text) {
@@ -491,6 +505,7 @@ final class EasyAccountViewModel: ObservableObject {
                 streamingMsgId = nil
             }
             endWaitingReply()
+            flushPendingOutbound()
         }
     }
 
@@ -516,7 +531,16 @@ final class EasyAccountViewModel: ObservableObject {
         isSocketConnecting = false
         // 断连时若仍在等待回复，必须解锁输入，否则重连后会永久卡在「助手正在回复」。
         let interruptedReply = waitingReply || streamingMsgId != nil
-        finishInterruptedReply(showToast: interruptedReply && !socket.wasIntentionalClose)
+        let interruptToast: String = {
+            if !pendingOutboundIds.isEmpty {
+                return "连接中断，缓存消息将在恢复后继续发送"
+            }
+            return "连接中断，请重新发送"
+        }()
+        finishInterruptedReply(
+            showToast: interruptedReply && !socket.wasIntentionalClose,
+            toast: interruptToast
+        )
 
         if socket.wasIntentionalClose { return }
         guard !handlingClose else { return }
@@ -564,6 +588,58 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
+    private func enqueuePending(_ text: String) {
+        let id = nextId()
+        pushMessage(ChatMessage(id: id, kind: .user, text: text, pending: true))
+        pendingOutboundIds.append(id)
+    }
+
+    /// 真正通过 WebSocket 发出一条用户消息；失败则重新入队头部等待重试。
+    private func dispatchOutbound(text: String, messageId: Int?) {
+        guard socket.sendChat(text) else {
+            if let messageId {
+                requeuePending(messageId, text: text)
+            } else {
+                enqueuePending(text)
+            }
+            showToast(connected ? "发送失败，将自动重试" : "已加入待发送，连接恢复后自动发送")
+            return
+        }
+        if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[idx].pending = false
+        } else {
+            pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
+        }
+        beginWaitingReply()
+    }
+
+    /// 连接可用且空闲时，按入队顺序逐条发送（等上一条回复结束再发下一条）。
+    private func flushPendingOutbound() {
+        guard connected, !waitingReply else { return }
+        guard let id = pendingOutboundIds.first else { return }
+
+        guard let message = messages.first(where: { $0.id == id && $0.kind == .user }) else {
+            pendingOutboundIds.removeFirst()
+            flushPendingOutbound()
+            return
+        }
+
+        pendingOutboundIds.removeFirst()
+        dispatchOutbound(text: message.text, messageId: id)
+    }
+
+    private func requeuePending(_ messageId: Int, text: String) {
+        if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[idx].pending = true
+            messages[idx].text = text
+        } else {
+            pushMessage(ChatMessage(id: messageId, kind: .user, text: text, pending: true))
+        }
+        if !pendingOutboundIds.contains(messageId) {
+            pendingOutboundIds.insert(messageId, at: 0)
+        }
+    }
+
     private func beginWaitingReply() {
         waitingReply = true
         streamingMsgId = nil
@@ -573,6 +649,8 @@ final class EasyAccountViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             guard waitingReply else { return }
             finishInterruptedReply(showToast: true, toast: "回复超时，请重试")
+            // 超时后若仍有缓存，继续尝试后续消息。
+            flushPendingOutbound()
         }
     }
 
@@ -641,6 +719,7 @@ final class EasyAccountViewModel: ObservableObject {
         endWaitingReply()
         inputText = ""
         streamingMsgId = nil
+        pendingOutboundIds = []
     }
 
     private func pushMessage(_ message: ChatMessage) {

@@ -497,39 +497,52 @@ struct MessageBubble: View {
             .padding(.trailing, 40)
 
         case .user:
-            Text(message.text)
-                .font(.system(size: 16))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(EATheme.blue)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        bottomLeadingRadius: 18,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 18,
-                        style: .continuous
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(message.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 6,
+                            topTrailingRadius: 18,
+                            style: .continuous
+                        )
                     )
-                )
-                .contentShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        bottomLeadingRadius: 18,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 18,
-                        style: .continuous
+                    .contentShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 6,
+                            topTrailingRadius: 18,
+                            style: .continuous
+                        )
                     )
-                )
-                .onTapGesture {
-                    onUserShortTap?()
+                    .onTapGesture {
+                        onUserShortTap?()
+                    }
+                    .onLongPressGesture(minimumDuration: 0.35) {
+                        onUserLongPressCopy?()
+                    }
+
+                if message.pending {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("待发送")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(EATheme.secondary)
+                    .padding(.trailing, 4)
                 }
-                .onLongPressGesture(minimumDuration: 0.35) {
-                    onUserLongPressCopy?()
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.leading, 40)
-                .accessibilityHint("轻点回填到输入框，长按复制")
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 40)
+            .accessibilityHint(message.pending ? "待连接恢复后自动发送" : "轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)

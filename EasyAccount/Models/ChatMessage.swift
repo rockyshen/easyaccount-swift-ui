@@ -12,6 +12,8 @@ struct ChatMessage: Identifiable, Equatable {
     var kind: ChatMessageKind
     var text: String
     var streaming: Bool = false
+    /// 用户消息已入队、等待连接恢复后再真正发到服务端。
+    var pending: Bool = false
 }
 
 enum ServerEventType: String, Decodable {
