@@ -140,8 +140,10 @@ struct CategoriesView: View {
                 } else if !vm.errorMessage.isEmpty && vm.actions.isEmpty {
                     errorState
                 } else {
-                    actionPicker
-                    Divider().overlay(EATheme.surfaceElevated)
+                    if !vm.actions.isEmpty {
+                        actionPicker
+                        Divider().overlay(EATheme.surfaceElevated)
+                    }
                     typeTree
                 }
             }
@@ -186,6 +188,8 @@ struct CategoriesView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        // 横向 ScrollView 在 VStack 中默认会吃掉全部纵向空间，造成大块空白。
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -211,6 +215,7 @@ struct CategoriesView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .contentMargins(.top, 0, .scrollContent)
         }
     }
 
