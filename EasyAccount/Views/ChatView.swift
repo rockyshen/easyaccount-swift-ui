@@ -97,8 +97,8 @@ struct ChatView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(PressableButtonStyle())
-                        .disabled(!vm.connected || vm.waitingReply)
-                        .opacity(vm.connected && !vm.waitingReply ? 1 : 0.45)
+                        .disabled(vm.waitingReply)
+                        .opacity(vm.waitingReply ? 0.45 : 1)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -165,12 +165,12 @@ struct ChatView: View {
                     holdToTalkArea
                 } else {
                     TextField(
-                        vm.waitingReply ? "助手正在回复…" : "随便问，记账、图片也可以",
+                        vm.composerPlaceholder,
                         text: $vm.inputText,
                         axis: .vertical
                     )
                     .lineLimit(1...5)
-                    .disabled(vm.waitingReply || !vm.connected)
+                    .disabled(vm.isComposerEditingDisabled)
                     .focused($inputFocused)
                     .font(.system(size: 16))
                     .foregroundStyle(EATheme.label)
@@ -200,7 +200,7 @@ struct ChatView: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
-                    .disabled(vm.waitingReply || !vm.connected)
+                    .disabled(vm.waitingReply)
                 } else {
                     Button {
                         sendFromComposer()
@@ -209,7 +209,8 @@ struct ChatView: View {
                             .font(.system(size: 28))
                             .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
                     }
-                    .disabled(!vm.canSend)
+                    // 断连时仍可点发送，由 ViewModel toast 提示并保留草稿。
+                    .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .buttonStyle(.plain)
                 }
             }
@@ -248,8 +249,8 @@ struct ChatView: View {
                         endHoldToTalk()
                     }
             )
-            .disabled(vm.waitingReply || !vm.connected)
-            .opacity(vm.waitingReply || !vm.connected ? 0.45 : 1)
+            .disabled(vm.waitingReply)
+            .opacity(vm.waitingReply ? 0.45 : 1)
             .animation(.easeOut(duration: 0.12), value: isHoldPressing)
     }
 
@@ -289,7 +290,8 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        guard vm.connected, !vm.waitingReply else { return }
+        // 断连时也允许语音填入草稿，发送仍受连接状态约束。
+        guard !vm.waitingReply else { return }
         isHoldPressing = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         do {
@@ -337,7 +339,8 @@ struct ChatView: View {
     }
 
     private func sendFromComposer() {
-        guard vm.canSend else { return }
+        let text = vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !vm.waitingReply else { return }
         dismissKeyboard()
         vm.sendChat()
     }
@@ -494,39 +497,52 @@ struct MessageBubble: View {
             .padding(.trailing, 40)
 
         case .user:
-            Text(message.text)
-                .font(.system(size: 16))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(EATheme.blue)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        bottomLeadingRadius: 18,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 18,
-                        style: .continuous
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(message.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 6,
+                            topTrailingRadius: 18,
+                            style: .continuous
+                        )
                     )
-                )
-                .contentShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        bottomLeadingRadius: 18,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 18,
-                        style: .continuous
+                    .contentShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 6,
+                            topTrailingRadius: 18,
+                            style: .continuous
+                        )
                     )
-                )
-                .onTapGesture {
-                    onUserShortTap?()
+                    .onTapGesture {
+                        onUserShortTap?()
+                    }
+                    .onLongPressGesture(minimumDuration: 0.35) {
+                        onUserLongPressCopy?()
+                    }
+
+                if message.pending {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("待发送")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(EATheme.secondary)
+                    .padding(.trailing, 4)
                 }
-                .onLongPressGesture(minimumDuration: 0.35) {
-                    onUserLongPressCopy?()
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.leading, 40)
-                .accessibilityHint("轻点回填到输入框，长按复制")
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 40)
+            .accessibilityHint(message.pending ? "待连接恢复后自动发送" : "轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)

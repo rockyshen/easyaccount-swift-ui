@@ -32,16 +32,20 @@ final class ChatWebSocket: NSObject {
         receiveLoop()
     }
 
-    func sendChat(_ text: String) {
-        guard let task,
+    /// 返回是否已成功提交到 socket；失败时不进入「等待回复」态。
+    @discardableResult
+    func sendChat(_ text: String) -> Bool {
+        guard isOpen,
+              let task,
               let data = try? JSONEncoder().encode(ChatOutbound(type: "chat", content: text)),
-              let raw = String(data: data, encoding: .utf8) else { return }
+              let raw = String(data: data, encoding: .utf8) else { return false }
         task.send(.string(raw)) { [weak self] error in
             guard let self, let error else { return }
             Task { @MainActor in
                 self.delegate?.chatWebSocket(self, didFailWith: error)
             }
         }
+        return true
     }
 
     func disconnect(intentional: Bool = true) {
