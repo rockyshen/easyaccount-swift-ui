@@ -140,8 +140,10 @@ struct CategoriesView: View {
                 } else if !vm.errorMessage.isEmpty && vm.actions.isEmpty {
                     errorState
                 } else {
-                    actionPicker
-                    Divider().overlay(EATheme.surfaceElevated)
+                    if !vm.actions.isEmpty {
+                        actionPicker
+                        Divider().overlay(EATheme.surfaceElevated)
+                    }
                     typeTree
                 }
             }
