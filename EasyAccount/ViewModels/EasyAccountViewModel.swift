@@ -122,7 +122,7 @@ final class EasyAccountViewModel: ObservableObject {
             }
             return "连接断开，发送后将排队"
         }
-        return "随便问，记账、图片也可以"
+        return "尽管问…"
     }
 
     /// 仅在等待回复时锁输入；断连时仍可编辑草稿。

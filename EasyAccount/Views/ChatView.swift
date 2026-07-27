@@ -7,6 +7,9 @@ struct ChatView: View {
     @StateObject private var speech = SpeechInputController()
     @State private var voiceMode = false
     @State private var isHoldPressing = false
+    /// 按住说话时上滑进入取消区。
+    @State private var willCancelHold = false
+    private let holdCancelDistance: CGFloat = 56
 
     private let suggestions = [
         "今天午饭花了 35 元",
@@ -147,82 +150,24 @@ struct ChatView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Button {
-                vm.showToast("附件功能即将开放")
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(EATheme.label)
-                    .frame(width: 36, height: 36)
-                    .background(EATheme.surfaceElevated)
-                    .clipShape(Circle())
+        VStack(spacing: 10) {
+            if voiceMode, isHoldPressing {
+                voiceRecordingHint
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .buttonStyle(PressableButtonStyle())
 
-            HStack(spacing: 8) {
-                if voiceMode {
-                    holdToTalkArea
-                } else {
-                    TextField(
-                        vm.composerPlaceholder,
-                        text: $vm.inputText,
-                        axis: .vertical
-                    )
-                    .lineLimit(1...5)
-                    .disabled(vm.isComposerEditingDisabled)
-                    .focused($inputFocused)
-                    .font(.system(size: 16))
-                    .foregroundStyle(EATheme.label)
-                    .onSubmit {
-                        sendFromComposer()
-                    }
-                }
-
-                if voiceMode {
-                    Button {
-                        exitVoiceMode()
-                    } label: {
-                        Image(systemName: "keyboard")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(EATheme.secondary)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(speech.isListening)
-                } else if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button {
-                        Task { await enterVoiceMode() }
-                    } label: {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(EATheme.secondary)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(vm.waitingReply)
-                } else {
-                    Button {
-                        sendFromComposer()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
-                    }
-                    // 断连时仍可点发送，由 ViewModel toast 提示并保留草稿。
-                    .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .buttonStyle(.plain)
-                }
+            if voiceMode {
+                voiceComposerBar
+            } else {
+                textComposerBar
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, voiceMode ? 8 : 10)
-            .background(EATheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .padding(.horizontal, 12)
-        .padding(.top, 10)
+        .padding(.top, isHoldPressing ? 8 : 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
+        .animation(.easeOut(duration: 0.16), value: isHoldPressing)
+        .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
             if speech.isListening {
                 speech.cancel()
@@ -230,36 +175,146 @@ struct ChatView: View {
         }
     }
 
-    private var holdToTalkArea: some View {
-        Text(holdToTalkTitle)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(isHoldPressing ? Color.white : EATheme.label)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(isHoldPressing ? EATheme.blue : EATheme.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard !isHoldPressing else { return }
-                        beginHoldToTalk()
-                    }
-                    .onEnded { _ in
-                        endHoldToTalk()
-                    }
+    /// 默认文字输入（图1）：单条浅色胶囊，左 + / 中输入框 / 右语音（有字时为发送）。
+    private var textComposerBar: some View {
+        HStack(spacing: 10) {
+            composerCircleButton(systemName: "plus") {
+                vm.showToast("附件功能即将开放")
+            }
+
+            TextField(
+                vm.composerPlaceholder,
+                text: $vm.inputText,
+                axis: .vertical
             )
-            .disabled(vm.waitingReply)
-            .opacity(vm.waitingReply ? 0.45 : 1)
-            .animation(.easeOut(duration: 0.12), value: isHoldPressing)
+            .lineLimit(1...5)
+            .disabled(vm.isComposerEditingDisabled)
+            .focused($inputFocused)
+            .font(.system(size: 16))
+            .foregroundStyle(EATheme.label)
+            .onSubmit {
+                sendFromComposer()
+            }
+
+            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                composerCircleButton(systemName: "dot.radiowaves.right") {
+                    Task { await enterVoiceMode() }
+                }
+                .disabled(vm.waitingReply)
+                .opacity(vm.waitingReply ? 0.45 : 1)
+            } else {
+                Button {
+                    sendFromComposer()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
+                        .frame(width: 36, height: 36)
+                }
+                .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(EATheme.surface)
+        .clipShape(Capsule())
+        .shadow(color: Color.black.opacity(0.06), radius: 8, y: 3)
     }
 
-    private var holdToTalkTitle: String {
-        if isHoldPressing {
-            let partial = speech.partialText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return partial.isEmpty ? "松开 结束" : partial
+    /// 语音模式：单条白色胶囊，左 + / 中「按住说话」/ 右键盘；按住后变为蓝色长条。
+    private var voiceComposerBar: some View {
+        HStack(spacing: 10) {
+            if !isHoldPressing {
+                composerCircleButton(systemName: "plus") {
+                    vm.showToast("附件功能即将开放")
+                }
+                .transition(.opacity)
+            }
+
+            Group {
+                if isHoldPressing {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                } else {
+                    Text("按住说话")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(EATheme.label)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(holdToTalkGesture)
+            .disabled(vm.waitingReply)
+
+            if !isHoldPressing {
+                composerCircleButton(systemName: "keyboard") {
+                    exitVoiceMode()
+                }
+                .disabled(speech.isListening)
+                .transition(.opacity)
+            }
         }
-        return "按住 说话"
+        .padding(.horizontal, isHoldPressing ? 0 : 8)
+        .padding(.vertical, isHoldPressing ? 0 : 6)
+        .background(holdBarBackground)
+        .clipShape(Capsule())
+        .shadow(
+            color: Color.black.opacity(isHoldPressing ? 0.08 : 0.06),
+            radius: isHoldPressing ? 10 : 8,
+            y: 3
+        )
+        .opacity(vm.waitingReply ? 0.45 : 1)
+    }
+
+    private var holdBarBackground: Color {
+        if !isHoldPressing { return EATheme.surface }
+        return willCancelHold ? EATheme.secondary : EATheme.blue
+    }
+
+    private var voiceRecordingHint: some View {
+        VStack(spacing: 10) {
+            VoiceSoundWaveView(isActive: isHoldPressing, isCanceling: willCancelHold)
+                .frame(height: 40)
+
+            Text(willCancelHold ? "松开取消" : "松开发送，上滑取消")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(willCancelHold ? EATheme.danger : EATheme.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+    }
+
+    private func composerCircleButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(EATheme.label)
+                .frame(width: 36, height: 36)
+                .background(EATheme.surfaceElevated)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var holdToTalkGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                if !isHoldPressing {
+                    beginHoldToTalk()
+                }
+                guard isHoldPressing else { return }
+                let canceling = value.translation.height < -holdCancelDistance
+                if canceling != willCancelHold {
+                    willCancelHold = canceling
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                }
+            }
+            .onEnded { _ in
+                endHoldToTalk()
+            }
     }
 
     private func enterVoiceMode() async {
@@ -283,6 +338,7 @@ struct ChatView: View {
             speech.cancel()
         }
         isHoldPressing = false
+        willCancelHold = false
         withAnimation(.easeInOut(duration: 0.15)) {
             voiceMode = false
         }
@@ -290,22 +346,34 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        // 断连时也允许语音填入草稿，发送仍受连接状态约束。
-        guard !vm.waitingReply else { return }
+        // 断连时也允许语音录入；发送仍走队列/连接校验。
+        guard !vm.waitingReply, !isHoldPressing else { return }
         isHoldPressing = true
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        willCancelHold = false
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         do {
             try speech.start()
         } catch {
             isHoldPressing = false
+            willCancelHold = false
             vm.showToast((error as? LocalizedError)?.errorDescription ?? "无法开始语音识别")
         }
     }
 
     private func endHoldToTalk() {
         guard isHoldPressing else { return }
-        let spoken = speech.stop()
+        let cancel = willCancelHold
         isHoldPressing = false
+        willCancelHold = false
+
+        if cancel {
+            speech.cancel()
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            vm.showToast("已取消")
+            return
+        }
+
+        let spoken = speech.stop()
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
 
         let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -314,16 +382,9 @@ struct ChatView: View {
             return
         }
 
-        if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            vm.inputText = text
-        } else {
-            vm.inputText += text
-        }
-        // 回到键盘模式，方便改字后发送
-        withAnimation(.easeInOut(duration: 0.15)) {
-            voiceMode = false
-        }
-        inputFocused = true
+        // 松开发送：直接发出，保持语音模式便于连续说下一条。
+        vm.inputText = text
+        vm.sendChat()
     }
 
     private var dismissKeyboardDrag: some Gesture {
@@ -450,6 +511,40 @@ struct ConnectionStatusDot: View {
         withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
             blinkBright = true
         }
+    }
+}
+
+/// 按住说话时的蓝色声波提示（取消态变为灰色）。
+struct VoiceSoundWaveView: View {
+    var isActive: Bool
+    var isCanceling: Bool
+
+    private let barCount = 28
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isActive)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 2.5) {
+                ForEach(0..<barCount, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(isCanceling ? EATheme.tertiary : EATheme.blue)
+                        .frame(width: 3, height: barHeight(index: index, time: t))
+                }
+            }
+            .frame(maxWidth: 220)
+            .frame(maxWidth: .infinity)
+            .animation(.easeOut(duration: 0.12), value: isCanceling)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(index: Int, time: TimeInterval) -> CGFloat {
+        let center = Double(barCount - 1) / 2
+        let distance = abs(Double(index) - center) / center
+        let envelope = max(0.2, 1 - distance * 0.85)
+        let wave = abs(sin(time * 9.5 + Double(index) * 0.62))
+        let secondary = abs(sin(time * 5.2 + Double(index) * 1.1)) * 0.35
+        return max(4, CGFloat((wave + secondary) * 30 * envelope + 4))
     }
 }
 
