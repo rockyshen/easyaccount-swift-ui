@@ -293,9 +293,11 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
+    /// 关闭管理子页并回到汉堡侧边栏（箭头返回 / 右划返回共用）。
     func closeManagement() {
         withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
             managementDestination = nil
+            showSideMenu = true
         }
     }
 

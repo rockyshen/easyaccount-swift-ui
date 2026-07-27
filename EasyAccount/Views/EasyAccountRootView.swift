@@ -238,10 +238,14 @@ struct EasyAccountRootView: View {
                         managementDragOffset = dismissX
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                        // 跟手滑出后无动画卸页，再打开侧栏，避免跳回聊天主界面。
                         var transaction = Transaction()
                         transaction.disablesAnimations = true
                         withTransaction(transaction) {
                             vm.managementDestination = nil
+                        }
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                            vm.showSideMenu = true
                         }
                         resetManagementDrag()
                     }
