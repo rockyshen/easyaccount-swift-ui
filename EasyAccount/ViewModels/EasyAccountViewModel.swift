@@ -284,10 +284,9 @@ final class EasyAccountViewModel: ObservableObject {
         showToast("「\(title)」即将上线")
     }
 
+    /// 保持侧栏展开，让管理子页覆盖其上；这样右划返回时露出的直接是侧栏而非聊天界面。
     func openManagement(_ destination: ManagementDestination) {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-            showSideMenu = false
-        }
+        showSideMenu = true
         withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
             managementDestination = destination
         }

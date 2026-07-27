@@ -75,6 +75,21 @@ enum EATheme {
         dark: rgb(255, 69, 78)
     )
 
+    /// 玻璃按钮三件套：半透明填充叠在 Material 之上，配细高光描边与柔和投影。
+    /// 浅/深色下都呈现「比背景略亮的半透明圆」，以此保持两种模式观感一致。
+    static let glassFill = dynamic(
+        light: UIColor(white: 1, alpha: 0.45),
+        dark: UIColor(white: 1, alpha: 0.10)
+    )
+    static let glassStroke = dynamic(
+        light: UIColor(white: 1, alpha: 0.90),
+        dark: UIColor(white: 1, alpha: 0.16)
+    )
+    static let glassShadow = dynamic(
+        light: UIColor(white: 0, alpha: 0.08),
+        dark: UIColor(white: 0, alpha: 0.30)
+    )
+
     static let scrim = dynamic(
         light: UIColor(white: 0, alpha: 0.28),
         dark: UIColor(white: 0, alpha: 0.45)
