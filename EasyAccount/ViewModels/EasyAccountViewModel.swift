@@ -122,7 +122,7 @@ final class EasyAccountViewModel: ObservableObject {
             }
             return "连接断开，发送后将排队"
         }
-        return "随便问，记账、图片也可以"
+        return "尽管问…"
     }
 
     /// 仅在等待回复时锁输入；断连时仍可编辑草稿。
@@ -293,9 +293,11 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
+    /// 关闭管理子页并回到汉堡侧边栏（箭头返回 / 右划返回共用）。
     func closeManagement() {
         withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
             managementDestination = nil
+            showSideMenu = true
         }
     }
 
