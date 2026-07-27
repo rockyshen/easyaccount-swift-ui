@@ -308,7 +308,7 @@ struct CenterStatusView: View {
     }
 }
 
-/// 管理页导航栏圆形图标按钮（黑箭头 / 加号等，参考系统浅灰圆底样式）。
+/// 管理页导航栏圆形图标按钮：白底软阴影单圆（避免灰底嵌套白圈）。
 struct ManagementCircleIconButton: View {
     let systemName: String
     var fontSize: CGFloat = 16
@@ -317,11 +317,12 @@ struct ManagementCircleIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: fontSize, weight: .semibold))
+                .font(.system(size: fontSize, weight: .medium))
                 .foregroundStyle(EATheme.label)
                 .frame(width: 34, height: 34)
-                .background(EATheme.surfaceElevated.opacity(0.92))
+                .background(EATheme.surface)
                 .clipShape(Circle())
+                .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 1)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
