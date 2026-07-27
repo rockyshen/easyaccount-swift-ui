@@ -604,7 +604,12 @@ final class EasyAccountViewModel: ObservableObject {
             } else {
                 enqueuePending(text)
             }
-            showToast(connected ? "发送失败，将自动重试" : "已加入待发送，连接恢复后自动发送")
+            if connected {
+                showToast("发送失败，将自动重试")
+                schedulePendingFlushRetry()
+            } else {
+                showToast("已加入待发送，连接恢复后自动发送")
+            }
             return
         }
         if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
@@ -613,6 +618,14 @@ final class EasyAccountViewModel: ObservableObject {
             pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
         }
         beginWaitingReply()
+    }
+
+    private func schedulePendingFlushRetry() {
+        Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            flushPendingOutbound()
+        }
     }
 
     /// 连接可用且空闲时，按入队顺序逐条发送（等上一条回复结束再发下一条）。
