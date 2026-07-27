@@ -175,56 +175,51 @@ struct ChatView: View {
         }
     }
 
-    /// 键盘输入模式：左侧 +，中间输入框，右侧语音/发送。
+    /// 默认文字输入（图1）：单条浅色胶囊，左 + / 中输入框 / 右语音（有字时为发送）。
     private var textComposerBar: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(spacing: 10) {
             composerCircleButton(systemName: "plus") {
                 vm.showToast("附件功能即将开放")
             }
 
-            HStack(spacing: 8) {
-                TextField(
-                    vm.composerPlaceholder,
-                    text: $vm.inputText,
-                    axis: .vertical
-                )
-                .lineLimit(1...5)
-                .disabled(vm.isComposerEditingDisabled)
-                .focused($inputFocused)
-                .font(.system(size: 16))
-                .foregroundStyle(EATheme.label)
-                .onSubmit {
-                    sendFromComposer()
-                }
-
-                if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button {
-                        Task { await enterVoiceMode() }
-                    } label: {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(EATheme.secondary)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(vm.waitingReply)
-                } else {
-                    Button {
-                        sendFromComposer()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
-                    }
-                    .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .buttonStyle(.plain)
-                }
+            TextField(
+                vm.composerPlaceholder,
+                text: $vm.inputText,
+                axis: .vertical
+            )
+            .lineLimit(1...5)
+            .disabled(vm.isComposerEditingDisabled)
+            .focused($inputFocused)
+            .font(.system(size: 16))
+            .foregroundStyle(EATheme.label)
+            .onSubmit {
+                sendFromComposer()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(EATheme.surface)
-            .clipShape(Capsule())
+
+            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                composerCircleButton(systemName: "dot.radiowaves.right") {
+                    Task { await enterVoiceMode() }
+                }
+                .disabled(vm.waitingReply)
+                .opacity(vm.waitingReply ? 0.45 : 1)
+            } else {
+                Button {
+                    sendFromComposer()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
+                        .frame(width: 36, height: 36)
+                }
+                .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.plain)
+            }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(EATheme.surface)
+        .clipShape(Capsule())
+        .shadow(color: Color.black.opacity(0.06), radius: 8, y: 3)
     }
 
     /// 语音模式：单条白色胶囊，左 + / 中「按住说话」/ 右键盘；按住后变为蓝色长条。
