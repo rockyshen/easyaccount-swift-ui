@@ -173,7 +173,8 @@ struct EasyAccountRootView: View {
     private var menuCloseDragGesture: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .local)
             .onChanged { value in
-                guard isChatStage, vm.showSideMenu || isMenuDragging else { return }
+                guard isChatStage, vm.managementDestination == nil else { return }
+                guard vm.showSideMenu || isMenuDragging else { return }
                 let dx = value.translation.width
                 let dy = value.translation.height
                 guard abs(dx) >= abs(dy) * 0.85 else { return }
@@ -238,14 +239,11 @@ struct EasyAccountRootView: View {
                         managementDragOffset = dismissX
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                        // 跟手滑出后无动画卸页，再打开侧栏，避免跳回聊天主界面。
+                        // 侧栏已在管理页下方展开，滑出后只需无动画卸页，衔接为一次连续动作。
                         var transaction = Transaction()
                         transaction.disablesAnimations = true
                         withTransaction(transaction) {
                             vm.managementDestination = nil
-                        }
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                            vm.showSideMenu = true
                         }
                         resetManagementDrag()
                     }
@@ -308,7 +306,8 @@ struct CenterStatusView: View {
     }
 }
 
-/// 管理页导航栏圆形图标按钮：白底软阴影单圆（避免灰底嵌套白圈）。
+/// 管理页导航栏圆形图标按钮：半透明玻璃单圆。
+/// 只有一个 Circle 图层，避免实心底色叠重阴影产生的多层圆观感。
 struct ManagementCircleIconButton: View {
     let systemName: String
     var fontSize: CGFloat = 16
@@ -317,15 +316,23 @@ struct ManagementCircleIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: fontSize, weight: .medium))
+                .font(.system(size: fontSize, weight: .semibold))
                 .foregroundStyle(EATheme.label)
-                .frame(width: 34, height: 34)
-                .background(EATheme.surface)
-                .clipShape(Circle())
-                .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 1)
+                .frame(width: 36, height: 36)
+                .background {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            Circle().fill(EATheme.glassFill)
+                        }
+                        .overlay {
+                            Circle().strokeBorder(EATheme.glassStroke, lineWidth: 0.8)
+                        }
+                        .shadow(color: EATheme.glassShadow, radius: 4, y: 1)
+                }
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle())
     }
 }
 

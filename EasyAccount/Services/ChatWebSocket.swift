@@ -16,6 +16,8 @@ final class ChatWebSocket: NSObject {
     private var session: URLSession?
     private var isOpen = false
     private var intentionalClose = false
+    /// 关闭与失败可能各自回调一次，只向 delegate 上报第一次。
+    private var didReportTermination = false
 
     var wasIntentionalClose: Bool { intentionalClose }
 
@@ -28,6 +30,7 @@ final class ChatWebSocket: NSObject {
         let task = session.webSocketTask(with: url)
         self.task = task
         isOpen = false
+        didReportTermination = false
         task.resume()
         receiveLoop()
     }
@@ -115,8 +118,29 @@ extension ChatWebSocket: URLSessionWebSocketDelegate {
         reason: Data?
     ) {
         Task { @MainActor in
+            guard webSocketTask === task, !didReportTermination else { return }
+            didReportTermination = true
             isOpen = false
             delegate?.chatWebSocket(self, didCloseWith: closeCode)
+        }
+    }
+
+    /// 握手未完成就失败（如 token 失效返回 401）不会触发 didCloseWith，只能在这里捕获；
+    /// 缺少此回调时连接失败将无人知晓，UI 会永久停在「连接中」且不再重试。
+    nonisolated func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        Task { @MainActor in
+            guard task === self.task, !didReportTermination else { return }
+            didReportTermination = true
+            isOpen = false
+            if let error {
+                delegate?.chatWebSocket(self, didFailWith: error)
+            } else {
+                delegate?.chatWebSocket(self, didCloseWith: .normalClosure)
+            }
         }
     }
 }

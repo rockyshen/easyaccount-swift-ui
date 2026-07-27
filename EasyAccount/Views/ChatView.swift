@@ -9,6 +9,10 @@ struct ChatView: View {
     @State private var isHoldPressing = false
     /// 按住说话时上滑进入取消区。
     @State private var willCancelHold = false
+    /// 本次按压手势是否已处理过按下，避免 onChanged 逐帧重复触发。
+    @State private var holdGestureBegan = false
+    /// 复用同一个发生器并预热，否则临时创建的发生器首次震动会延迟或丢失。
+    @State private var holdImpact = UIImpactFeedbackGenerator(style: .medium)
     private let holdCancelDistance: CGFloat = 56
 
     private let suggestions = [
@@ -42,25 +46,16 @@ struct ChatView: View {
         .background(EATheme.background.ignoresSafeArea())
     }
 
-    /// 顶部毛玻璃栏：内容可从其下方滚过，形成玻璃模糊感。
+    /// 顶部渐隐栏：与页面背景同色，内容滚到下方时沿下沿淡出。
+    /// 不用 Material：它在近黑背景上会明显提亮，形成一块可见的色块。
     private var chatHeader: some View {
         HStack {
-            Button {
+            ManagementCircleIconButton(systemName: "line.3.horizontal", fontSize: 17) {
                 dismissKeyboard()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     vm.showSideMenu = true
                 }
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(EATheme.label)
-                    .frame(width: 36, height: 36)
-                    .background(EATheme.surface.opacity(0.72))
-                    .clipShape(Circle())
-                    .shadow(color: Color.black.opacity(0.08), radius: 4, y: 1)
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
 
             Spacer(minLength: 0)
         }
@@ -68,14 +63,16 @@ struct ChatView: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            ZStack(alignment: .bottom) {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                // 底部细线，增强玻璃分层
-                Rectangle()
-                    .fill(EATheme.label.opacity(0.06))
-                    .frame(height: 0.5)
-            }
+            // 渐变终点用同色的 0 透明度而非 .clear，避免插值经过灰色产生暗带。
+            LinearGradient(
+                stops: [
+                    .init(color: EATheme.background, location: 0),
+                    .init(color: EATheme.background, location: 0.68),
+                    .init(color: EATheme.background.opacity(0), location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
             .ignoresSafeArea(edges: .top)
         }
     }
@@ -193,6 +190,9 @@ struct ChatView: View {
             if speech.isListening {
                 speech.cancel()
             }
+            isHoldPressing = false
+            willCancelHold = false
+            holdGestureBegan = false
         }
     }
 
@@ -244,42 +244,36 @@ struct ChatView: View {
     }
 
     /// 语音模式：单条白色胶囊，左 + / 中「按住说话」/ 右键盘；按住后变为蓝色长条。
+    ///
+    /// 按住期间只改变透明度与背景色、不增删子视图也不改变布局尺寸：
+    /// 手势宿主视图一旦被重建，进行中的 DragGesture 会被取消而收不到 onEnded。
     private var voiceComposerBar: some View {
         HStack(spacing: 10) {
-            if !isHoldPressing {
-                composerCircleButton(systemName: "plus") {
-                    vm.showToast("附件功能即将开放")
-                }
-                .transition(.opacity)
+            composerCircleButton(systemName: "plus") {
+                vm.showToast("附件功能即将开放")
             }
+            .opacity(isHoldPressing ? 0 : 1)
+            .allowsHitTesting(!isHoldPressing)
 
-            Group {
-                if isHoldPressing {
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 48)
-                } else {
-                    Text("按住说话")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(EATheme.label)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-            }
-            .contentShape(Rectangle())
-            .gesture(holdToTalkGesture)
-            .disabled(vm.waitingReply)
+            Text("按住说话")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(EATheme.label)
+                .opacity(isHoldPressing ? 0 : 1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .contentShape(Rectangle())
+                .gesture(holdToTalkGesture)
+                .disabled(vm.waitingReply)
 
-            if !isHoldPressing {
-                composerCircleButton(systemName: "keyboard") {
-                    exitVoiceMode()
-                }
-                .disabled(speech.isListening)
-                .transition(.opacity)
+            composerCircleButton(systemName: "keyboard") {
+                exitVoiceMode()
             }
+            .opacity(isHoldPressing ? 0 : 1)
+            .allowsHitTesting(!isHoldPressing)
+            .disabled(speech.isListening)
         }
-        .padding(.horizontal, isHoldPressing ? 0 : 8)
-        .padding(.vertical, isHoldPressing ? 0 : 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(holdBarBackground)
         .clipShape(Capsule())
         .shadow(
@@ -323,17 +317,20 @@ struct ChatView: View {
     private var holdToTalkGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                if !isHoldPressing {
+                if !holdGestureBegan {
+                    holdGestureBegan = true
                     beginHoldToTalk()
                 }
                 guard isHoldPressing else { return }
                 let canceling = value.translation.height < -holdCancelDistance
                 if canceling != willCancelHold {
                     willCancelHold = canceling
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    holdImpact.impactOccurred()
+                    holdImpact.prepare()
                 }
             }
             .onEnded { _ in
+                holdGestureBegan = false
                 endHoldToTalk()
             }
     }
@@ -349,6 +346,7 @@ struct ChatView: View {
             vm.showToast(SpeechInputError.recognizerUnavailable.localizedDescription)
             return
         }
+        holdImpact.prepare()
         withAnimation(.easeInOut(duration: 0.15)) {
             voiceMode = true
         }
@@ -360,6 +358,7 @@ struct ChatView: View {
         }
         isHoldPressing = false
         willCancelHold = false
+        holdGestureBegan = false
         withAnimation(.easeInOut(duration: 0.15)) {
             voiceMode = false
         }
@@ -371,7 +370,9 @@ struct ChatView: View {
         guard !vm.waitingReply, !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
+        holdImpact.impactOccurred()
+        holdImpact.prepare()
         do {
             try speech.start()
         } catch {

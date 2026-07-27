@@ -43,7 +43,10 @@ final class SpeechInputController: ObservableObject {
         }
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers, .allowBluetooth])
+        // 用 playAndRecord 而非 record：record 会独占音频硬件并屏蔽 Taptic，
+        // 导致按住说话期间（如上滑取消）的震动反馈无法播放。
+        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth, .defaultToSpeaker])
+        try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
 
         let request = SFSpeechAudioBufferRecognitionRequest()
