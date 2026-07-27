@@ -17,11 +17,12 @@ struct ChatView: View {
         "本月支出概况"
     ]
 
-    var body: some View {
-        VStack(spacing: 0) {
-            chatHeader
+    /// 顶部玻璃栏内容区高度（不含状态栏），用于给滚动内容留出起始间距。
+    private let chatHeaderContentHeight: CGFloat = 52
 
-            ZStack {
+    var body: some View {
+        ZStack(alignment: .top) {
+            Group {
                 if vm.messages.isEmpty {
                     emptyGreeting
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -32,6 +33,8 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .simultaneousGesture(dismissKeyboardDrag)
+
+            chatHeader
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composer
@@ -39,6 +42,7 @@ struct ChatView: View {
         .background(EATheme.background.ignoresSafeArea())
     }
 
+    /// 顶部毛玻璃栏：内容可从其下方滚过，形成玻璃模糊感。
     private var chatHeader: some View {
         HStack {
             Button {
@@ -48,18 +52,32 @@ struct ChatView: View {
                 }
             } label: {
                 Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(EATheme.label)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
+                    .frame(width: 36, height: 36)
+                    .background(EATheme.surface.opacity(0.72))
+                    .clipShape(Circle())
+                    .shadow(color: Color.black.opacity(0.08), radius: 4, y: 1)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(EATheme.background.opacity(0.96))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                // 底部细线，增强玻璃分层
+                Rectangle()
+                    .fill(EATheme.label.opacity(0.06))
+                    .frame(height: 0.5)
+            }
+            .ignoresSafeArea(edges: .top)
+        }
     }
 
     private var emptyGreeting: some View {
@@ -110,6 +128,7 @@ struct ChatView: View {
                 Spacer(minLength: 40)
             }
             .frame(maxWidth: .infinity)
+            .padding(.top, chatHeaderContentHeight)
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.always)
@@ -133,12 +152,14 @@ struct ChatView: View {
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.top, chatHeaderContentHeight + 8)
+                .padding(.bottom, 12)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .scrollBounceBehavior(.basedOnSize)
+            // 即使内容不足一屏也允许回弹，短对话可轻微上划。
+            .scrollBounceBehavior(.always)
             .onChange(of: vm.messages) { _, _ in
                 if let last = vm.messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {
