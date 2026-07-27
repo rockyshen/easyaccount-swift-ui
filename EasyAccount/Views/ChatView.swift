@@ -528,8 +528,14 @@ struct ConnectionStatusDot: View {
     }
 
     private func updateBlink() {
-        blinkBright = false
-        guard kind == .connecting else { return }
+        guard kind == .connecting else {
+            // 必须用一次零时长动画覆盖，否则 repeatForever 会继续跑，
+            // 下次进入连接中时新动画叠加上去，闪烁节奏会越来越乱。
+            withAnimation(.linear(duration: 0)) {
+                blinkBright = false
+            }
+            return
+        }
         withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
             blinkBright = true
         }
