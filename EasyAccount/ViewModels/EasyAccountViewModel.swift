@@ -75,8 +75,8 @@ final class EasyAccountViewModel: ObservableObject {
     private var toastTask: Task<Void, Never>?
     private var replyTimeoutTask: Task<Void, Never>?
     private var chatTask: Task<Void, Never>?
-    /// 取消后忽略 onComplete，避免重复 toast / 二次解锁。
-    private var suppressCompleteHandling = false
+    /// 轮次世代：忽略被替换/取消的上一轮 SSE 回调，避免误伤新一轮。
+    private var chatGeneration = 0
 
     /// 与服务端约 300s 超时对齐。
     private let replyTimeoutNanoseconds: UInt64 = 300_000_000_000
@@ -427,23 +427,25 @@ final class EasyAccountViewModel: ObservableObject {
 
         pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
         beginWaitingReply()
-        suppressCompleteHandling = false
+        chatGeneration += 1
+        let generation = chatGeneration
 
         chatTask = chatClient.start(
             httpBase: httpBase,
             token: token,
             content: text,
             onEvent: { [weak self] event in
-                self?.handleSSEEvent(event)
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEEvent(event)
             },
             onComplete: { [weak self] result in
-                self?.handleSSEComplete(result)
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEComplete(result)
             }
         )
     }
 
     private func handleSSEEvent(_ event: SseChatEvent) {
-        guard !suppressCompleteHandling else { return }
         switch event {
         case .started:
             break
@@ -479,10 +481,6 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func handleSSEComplete(_ result: Result<Void, ChatSSEError>) {
         chatTask = nil
-        if suppressCompleteHandling {
-            suppressCompleteHandling = false
-            return
-        }
 
         switch result {
         case .success:
@@ -517,7 +515,7 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func stopChat(toast: String?) {
         guard chatTask != nil || waitingReply || streamingMsgId != nil else { return }
-        suppressCompleteHandling = true
+        chatGeneration += 1
         chatClient.cancel()
         chatTask = nil
         if waitingReply || streamingMsgId != nil {
@@ -586,7 +584,7 @@ final class EasyAccountViewModel: ObservableObject {
         endWaitingReply()
         inputText = ""
         streamingMsgId = nil
-        suppressCompleteHandling = false
+        chatGeneration += 1
     }
 
     private func pushMessage(_ message: ChatMessage) {
