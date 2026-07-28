@@ -115,8 +115,6 @@ struct ChatView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(PressableButtonStyle())
-                        .disabled(vm.waitingReply)
-                        .opacity(vm.waitingReply ? 0.45 : 1)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -174,7 +172,7 @@ struct ChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            if voiceMode, !vm.waitingReply {
+            if voiceMode {
                 voiceComposerBar
             } else {
                 textComposerBar
@@ -216,21 +214,10 @@ struct ChatView: View {
                 sendFromComposer()
             }
 
-            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !vm.waitingReply {
+            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 composerCircleButton(systemName: "dot.radiowaves.right") {
                     Task { await enterVoiceMode() }
                 }
-            } else if vm.waitingReply {
-                Button {
-                    vm.stopGeneration()
-                } label: {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(EATheme.danger)
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("停止生成")
             } else {
                 Button {
                     sendFromComposer()
@@ -240,7 +227,7 @@ struct ChatView: View {
                         .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
                         .frame(width: 36, height: 36)
                 }
-                .disabled(vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!vm.canSend)
                 .buttonStyle(.plain)
             }
         }
@@ -271,7 +258,6 @@ struct ChatView: View {
                 .padding(.vertical, 14)
                 .contentShape(Rectangle())
                 .gesture(holdToTalkGesture)
-                .disabled(vm.waitingReply)
 
             composerCircleButton(systemName: "keyboard") {
                 exitVoiceMode()
@@ -289,7 +275,6 @@ struct ChatView: View {
             radius: isHoldPressing ? 10 : 8,
             y: 3
         )
-        .opacity(vm.waitingReply ? 0.45 : 1)
     }
 
     private var holdBarBackground: Color {
@@ -374,7 +359,7 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        guard !vm.waitingReply, !isHoldPressing else { return }
+        guard !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
         // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
@@ -430,7 +415,7 @@ struct ChatView: View {
 
     private func sendFromComposer() {
         let text = vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !vm.waitingReply else { return }
+        guard !text.isEmpty else { return }
         dismissKeyboard()
         vm.sendChat()
     }
@@ -627,7 +612,7 @@ struct MessageBubble: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(EATheme.blue)
+                    .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
                     .clipShape(
                         UnevenRoundedRectangle(
                             topLeadingRadius: 18,
@@ -652,10 +637,21 @@ struct MessageBubble: View {
                     .onLongPressGesture(minimumDuration: 0.35) {
                         onUserLongPressCopy?()
                     }
+
+                if message.pending {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("待发送")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(EATheme.secondary)
+                    .padding(.trailing, 4)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
-            .accessibilityHint("轻点回填到输入框，长按复制")
+            .accessibilityHint(message.pending ? "等待上一条回复结束后自动发送" : "轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)

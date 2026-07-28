@@ -12,6 +12,8 @@ struct ChatMessage: Identifiable, Equatable {
     var kind: ChatMessageKind
     var text: String
     var streaming: Bool = false
+    /// 已展示在对话中，等待上一轮 SSE 结束后再真正发往服务端。
+    var pending: Bool = false
 }
 
 /// SSE `data:` JSON 载荷（与 event 名对应的 type 可作校验）。
