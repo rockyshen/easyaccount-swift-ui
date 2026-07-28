@@ -7,27 +7,10 @@ enum AuthService {
         return raw
     }
 
-    static func httpBaseFromWs(_ wsUrl: String) -> String {
-        let raw = stripTrailingSlash(wsUrl)
-        if raw.isEmpty { return AppConfig.defaultHttpURL }
-        if raw.hasPrefix("wss://") { return "https://" + raw.dropFirst(6) }
-        if raw.hasPrefix("ws://") { return "http://" + raw.dropFirst(5) }
-        if raw.hasPrefix("https://") || raw.hasPrefix("http://") { return raw }
-        return raw
-    }
-
-    static func resolveHttpBase(httpUrl: String?, wsUrl: String) -> String {
+    static func resolveHttpBase(_ httpUrl: String?) -> String {
         let explicit = stripTrailingSlash(httpUrl ?? "")
         if !explicit.isEmpty { return explicit }
-        return httpBaseFromWs(wsUrl)
-    }
-
-    static func buildChatWsUrl(wsUrl: String, token: String) -> URL? {
-        let base = stripTrailingSlash(wsUrl)
-        let fallback = base.isEmpty ? AppConfig.defaultWsURL : base
-        var components = URLComponents(string: "\(fallback)/ws")
-        components?.queryItems = [URLQueryItem(name: "token", value: token)]
-        return components?.url
+        return AppConfig.defaultHttpURL
     }
 
     static func login(httpBase: String, name: String, password: String) async throws -> AuthSessionResponse {
