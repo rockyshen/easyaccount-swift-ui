@@ -209,7 +209,6 @@ struct ChatView: View {
                 axis: .vertical
             )
             .lineLimit(1...5)
-            .disabled(vm.isComposerEditingDisabled)
             .focused($inputFocused)
             .font(.system(size: 16))
             .foregroundStyle(EATheme.label)

@@ -105,15 +105,14 @@ final class EasyAccountViewModel: ObservableObject {
         !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// 输入框占位：回复中 / 常态。
+    /// 输入框占位：回复中仍可输入下一条草稿。
     var composerPlaceholder: String {
-        if waitingReply { return "助手正在回复…" }
-        return "尽管问…"
+        "尽管问…"
     }
 
-    /// 仅在等待回复时锁输入；发送中仅允许停止。
+    /// 回复中不锁输入框，仅禁用发送（右侧显示停止）。
     var isComposerEditingDisabled: Bool {
-        waitingReply
+        false
     }
 
     var displayUserName: String {
