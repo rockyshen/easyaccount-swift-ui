@@ -68,6 +68,8 @@ final class ChatSSEClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 300
         config.timeoutIntervalForResource = 300
+        // 避免对 event-stream 做额外缓冲，尽快交付增量字节。
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: config)
         self.session = session
 
@@ -164,47 +166,115 @@ final class ChatSSEClient {
 
     // MARK: - SSE parsing
 
+    /// 按字节缓冲拆行，避免 `AsyncBytes.lines` 在多字节 UTF-8 边界上解码失败；
+    /// 并以「新 event: / 空行」双条件提交事件，兼容缺空行的流。
     private static func consumeSSE(
         bytes: URLSession.AsyncBytes,
         onEvent: @escaping (SseChatEvent) -> Void
     ) async throws {
-        var lines: [String] = []
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            if line.isEmpty {
-                if let event = try decodeEvent(from: lines) {
-                    onEvent(event)
-                }
-                lines.removeAll(keepingCapacity: true)
-            } else {
-                lines.append(line)
+        var buffer = Data()
+        var eventName: String?
+        var dataLines: [String] = []
+
+        func flush() {
+            guard let event = decodeEvent(name: eventName, dataLines: dataLines) else {
+                eventName = nil
+                dataLines.removeAll(keepingCapacity: true)
+                return
             }
-        }
-        if !lines.isEmpty, let event = try decodeEvent(from: lines) {
             onEvent(event)
+            eventName = nil
+            dataLines.removeAll(keepingCapacity: true)
         }
-    }
 
-    private static func parseSseLines(_ lines: [String]) -> (String?, String?) {
-        var event: String?
-        var data: String?
-        for line in lines {
-            if line.hasPrefix(":") { continue }
+        func handleLine(_ line: String) {
+            if line.isEmpty {
+                flush()
+                return
+            }
+            if line.hasPrefix(":") {
+                return
+            }
             if line.hasPrefix("event:") {
-                event = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("data:") {
-                let part = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                data = (data.map { $0 + "\n" } ?? "") + part
+                // 上一事件若未以空行结束，先提交，避免多段 data 拼成非法 JSON。
+                if eventName != nil || !dataLines.isEmpty {
+                    flush()
+                }
+                eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+                return
+            }
+            if line.hasPrefix("data:") {
+                let part = String(line.dropFirst(5))
+                // SSE 规范：data: 后可选的一个前导空格应去掉；其余内容保留。
+                if part.hasPrefix(" ") {
+                    dataLines.append(String(part.dropFirst()))
+                } else {
+                    dataLines.append(part.trimmingCharacters(in: CharacterSet(charactersIn: "\r")))
+                }
+                return
             }
         }
-        return (event, data)
+
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            buffer.append(byte)
+            while let nl = buffer.firstIndex(of: 0x0A) {
+                let lineData = buffer.subdata(in: buffer.startIndex..<nl)
+                buffer.removeSubrange(buffer.startIndex...nl)
+                var line = String(data: lineData, encoding: .utf8) ?? ""
+                if line.hasSuffix("\r") {
+                    line.removeLast()
+                }
+                handleLine(line)
+            }
+        }
+
+        if !buffer.isEmpty {
+            var line = String(data: buffer, encoding: .utf8) ?? ""
+            if line.hasSuffix("\r") {
+                line.removeLast()
+            }
+            if !line.isEmpty {
+                handleLine(line)
+            }
+        }
+        if eventName != nil || !dataLines.isEmpty {
+            flush()
+        }
     }
 
-    private static func decodeEvent(from lines: [String]) throws -> SseChatEvent? {
-        let (name, data) = parseSseLines(lines)
-        guard let data, let raw = data.data(using: .utf8) else { return nil }
-        let obj = try JSONDecoder().decode(ChatServerEvent.self, from: raw)
-        switch name ?? obj.type {
+    private static func decodeEvent(name: String?, dataLines: [String]) -> SseChatEvent? {
+        guard !dataLines.isEmpty else { return nil }
+        let joined = dataLines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !joined.isEmpty else { return nil }
+
+        if let event = decodeJSONEvent(name: name, jsonText: joined) {
+            return event
+        }
+        // 容错：若误拼了多段 JSON，按行分别解析。
+        if dataLines.count > 1 {
+            var last: SseChatEvent?
+            for line in dataLines {
+                let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                if let event = decodeJSONEvent(name: name, jsonText: text) {
+                    last = event
+                }
+            }
+            return last
+        }
+        return nil
+    }
+
+    private static func decodeJSONEvent(name: String?, jsonText: String) -> SseChatEvent? {
+        let raw = Data(jsonText.utf8)
+        guard !raw.isEmpty else { return nil }
+        guard let obj = try? JSONDecoder().decode(ChatServerEvent.self, from: raw) else {
+            return nil
+        }
+        let resolved = (name?.isEmpty == false ? name : nil) ?? obj.type
+        switch resolved {
         case "started":
             return .started
         case "message_delta":
@@ -212,7 +282,7 @@ final class ChatSSEClient {
         case "message_end":
             return .end(obj.content ?? "")
         case "error":
-            return .error(obj.message ?? "处理失败")
+            return .error(obj.message ?? obj.content ?? "处理失败")
         default:
             return nil
         }
