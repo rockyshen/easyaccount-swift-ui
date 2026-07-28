@@ -5,7 +5,6 @@ import SwiftUI
 enum AppStage: Equatable {
     case bootstrapping
     case login
-    case connecting
     case live
 }
 
@@ -60,31 +59,27 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var managementDestination: ManagementDestination?
     @Published var appearanceMode: AppearanceMode
 
-    @Published var wsUrl: String
     @Published var httpBase: String
 
     @Published var currentUser: AuthUser?
+    /// 已登录可用（SSE 无长连接；用于侧栏「在线」与状态灯）。
     @Published var connected: Bool = false
-    /// 正在发起 WS 握手（含重连）；仅此阶段状态灯为黄色。
-    @Published private(set) var isSocketConnecting: Bool = false
     @Published var messages: [ChatMessage] = []
     @Published var inputText: String = ""
     @Published var waitingReply: Bool = false
 
     private var token: String = ""
-    private let socket = ChatWebSocket()
+    private let chatClient = ChatSSEClient()
     private var streamingMsgId: Int?
-    private var reconnectAttempts = 0
-    private var reconnectTask: Task<Void, Never>?
     private var sessionInvalidHandled = false
-    private var handlingClose = false
     private var toastTask: Task<Void, Never>?
     private var replyTimeoutTask: Task<Void, Never>?
-    /// 断连期间缓存的用户消息 id，按入队顺序在重连后逐条发送。
-    private var pendingOutboundIds: [Int] = []
+    private var chatTask: Task<Void, Never>?
+    /// 轮次世代：忽略被替换/取消的上一轮 SSE 回调，避免误伤新一轮。
+    private var chatGeneration = 0
 
-    /// 等待助手回复的最长时长，超时后解锁输入，避免永久卡住。
-    private let replyTimeoutNanoseconds: UInt64 = 60_000_000_000
+    /// 与服务端约 300s 超时对齐。
+    private let replyTimeoutNanoseconds: UInt64 = 300_000_000_000
 
     var canSubmitAuth: Bool {
         let name = loginName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,25 +102,16 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     var canSend: Bool {
-        // 断连也可发送：进入待发送队列，连接恢复后自动推送。
         !waitingReply && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var pendingOutboundCount: Int { pendingOutboundIds.count }
-
-    /// 输入框占位：回复中 / 断连排队 / 常态。
+    /// 输入框占位：回复中 / 常态。
     var composerPlaceholder: String {
         if waitingReply { return "助手正在回复…" }
-        if !connected {
-            if pendingOutboundCount > 0 {
-                return "已缓存 \(pendingOutboundCount) 条，连接后自动发送"
-            }
-            return "连接断开，发送后将排队"
-        }
         return "尽管问…"
     }
 
-    /// 仅在等待回复时锁输入；断连时仍可编辑草稿。
+    /// 仅在等待回复时锁输入；发送中仅允许停止。
     var isComposerEditingDisabled: Bool {
         waitingReply
     }
@@ -142,11 +128,8 @@ final class EasyAccountViewModel: ObservableObject {
     var headerSubtitle: String? {
         switch stage {
         case .live:
-            if connected {
-                let name = currentUser?.displayName ?? ""
-                return name.isEmpty ? "已连接" : "已连接 · \(name)"
-            }
-            return "连接中…"
+            let name = currentUser?.displayName ?? ""
+            return name.isEmpty ? "已登录" : "已登录 · \(name)"
         case .bootstrapping:
             return "校验登录中…"
         default:
@@ -154,14 +137,9 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
-    init(
-        defaultWsUrl: String = AppConfig.defaultWsURL,
-        defaultHttpUrl: String = AppConfig.defaultHttpURL
-    ) {
-        self.wsUrl = defaultWsUrl
-        self.httpBase = AuthService.resolveHttpBase(httpUrl: defaultHttpUrl, wsUrl: defaultWsUrl)
+    init(defaultHttpUrl: String = AppConfig.defaultHttpURL) {
+        self.httpBase = AuthService.resolveHttpBase(defaultHttpUrl)
         self.appearanceMode = SessionStore.getAppearanceMode()
-        socket.delegate = self
     }
 
     func setAppearanceMode(_ mode: AppearanceMode) {
@@ -175,9 +153,15 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     func onDisappear() {
-        reconnectTask?.cancel()
         toastTask?.cancel()
-        socket.disconnect(intentional: true)
+        stopChat(toast: nil)
+    }
+
+    /// App 进后台可能断流；回前台若仍在等待则提示重发。
+    func handleScenePhase(_ phase: ScenePhase) {
+        guard phase == .background else { return }
+        guard waitingReply else { return }
+        stopChat(toast: "已中断，请重发")
     }
 
     func switchAuthMode(_ mode: AuthMode) {
@@ -248,24 +232,18 @@ final class EasyAccountViewModel: ObservableObject {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !waitingReply else { return }
         inputText = ""
-
-        // 未连接，或仍有排队消息：先入队，保证顺序；连上后由 flush 逐条推送。
-        if !connected || !pendingOutboundIds.isEmpty {
-            enqueuePending(text)
-            if !connected {
-                showToast("已加入待发送，连接恢复后自动发送")
-            } else {
-                flushPendingOutbound()
-            }
-            return
-        }
-
-        dispatchOutbound(text: text, messageId: nil)
+        dispatchOutbound(text: text)
     }
 
     func sendSuggestion(_ text: String) {
         inputText = text
         sendChat()
+    }
+
+    /// 用户点停止：取消 URLSessionTask，服务端释放 busy。
+    func stopGeneration() {
+        guard waitingReply else { return }
+        stopChat(toast: "已停止生成")
     }
 
     func showToast(_ message: String) {
@@ -318,6 +296,7 @@ final class EasyAccountViewModel: ObservableObject {
         guard !stored.isEmpty else {
             stage = .login
             currentUser = nil
+            connected = false
             return
         }
         token = stored
@@ -326,15 +305,17 @@ final class EasyAccountViewModel: ObservableObject {
             let me = try await AuthService.fetchMe(httpBase: httpBase, token: stored)
             currentUser = me
             SessionStore.persistSession(token: stored, user: me)
-            connectWs()
+            enterLive()
         } catch let error as APIError where error.status == 401 {
             SessionStore.clearSession()
             token = ""
             currentUser = nil
+            connected = false
             stage = .login
             authError = error.message
         } catch {
             stage = .login
+            connected = false
             authError = (error as? APIError)?.message ?? "无法校验登录，请检查服务地址"
         }
     }
@@ -412,13 +393,12 @@ final class EasyAccountViewModel: ObservableObject {
         loginRoute = .landing
         showSideMenu = false
         resetChatState()
-        connectWs()
+        enterLive()
     }
 
     private func onLogout() async {
         let t = token
-        reconnectTask?.cancel()
-        socket.disconnect(intentional: true)
+        stopChat(toast: nil)
         await AuthService.logout(httpBase: httpBase, token: t)
         SessionStore.clearSession()
         token = ""
@@ -432,43 +412,44 @@ final class EasyAccountViewModel: ObservableObject {
         authError = ""
     }
 
-    // MARK: - WebSocket
+    private func enterLive() {
+        connected = true
+        stage = .live
+    }
 
-    private func connectWs() {
+    // MARK: - SSE chat
+
+    private func dispatchOutbound(text: String) {
         guard !token.isEmpty else {
-            isSocketConnecting = false
             Task { await forceToLogin("请先登录") }
             return
         }
-        reconnectTask?.cancel()
-        if stage != .live { stage = .connecting }
-        connected = false
-        isSocketConnecting = true
 
-        guard let url = AuthService.buildChatWsUrl(wsUrl: wsUrl, token: token) else {
-            isSocketConnecting = false
-            stage = .login
-            authError = "无法创建连接，请检查地址"
-            return
-        }
-        socket.connect(url: url)
+        pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
+        beginWaitingReply()
+        chatGeneration += 1
+        let generation = chatGeneration
+
+        chatTask = chatClient.start(
+            httpBase: httpBase,
+            token: token,
+            content: text,
+            onEvent: { [weak self] event in
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEEvent(event)
+            },
+            onComplete: { [weak self] result in
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEComplete(result)
+            }
+        )
     }
 
-    private func handleServerMessage(_ msg: ServerEvent) {
-        switch msg.type {
-        case .connected:
-            connected = true
-            isSocketConnecting = false
-            stage = .live
-            reconnectAttempts = 0
-            // 重连成功不往对话里插系统提示；若有缓存消息则按序推送。
-            flushPendingOutbound()
-        case .messageDelta:
-            let chunk = msg.content ?? ""
-            // 服务端偶发把重连文案当消息流下发，直接忽略
-            if streamingMsgId == nil, isConnectionStatusNoise(chunk) {
-                return
-            }
+    private func handleSSEEvent(_ event: SseChatEvent) {
+        switch event {
+        case .started:
+            break
+        case .delta(let chunk):
             if streamingMsgId == nil {
                 let id = nextId()
                 streamingMsgId = id
@@ -476,181 +457,69 @@ final class EasyAccountViewModel: ObservableObject {
             } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].text += chunk
             }
-        case .messageEnd:
+        case .end(let content):
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
-                let finalText = {
-                    if let content = msg.content, !content.isEmpty { return content }
-                    return messages[idx].text
-                }()
-                if isConnectionStatusNoise(finalText) {
-                    messages.remove(at: idx)
-                } else {
-                    if let content = msg.content, !content.isEmpty {
-                        messages[idx].text = content
-                    }
-                    messages[idx].streaming = false
+                if !content.isEmpty {
+                    messages[idx].text = content
                 }
+                messages[idx].streaming = false
                 streamingMsgId = nil
-            } else if let content = msg.content, !content.isEmpty, !isConnectionStatusNoise(content) {
+            } else if !content.isEmpty {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
             endWaitingReply()
-            flushPendingOutbound()
-        case .error:
-            let text = msg.message ?? "发生错误"
-            if !isConnectionStatusNoise(text) {
-                pushMessage(ChatMessage(id: nextId(), kind: .error, text: text))
-            }
+        case .error(let message):
+            let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            pushMessage(ChatMessage(id: nextId(), kind: .error, text: text.isEmpty ? "处理失败" : text))
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].streaming = false
                 streamingMsgId = nil
             }
             endWaitingReply()
-            flushPendingOutbound()
         }
     }
 
-    /// 过滤断线/重连状态文案，避免插入聊天记录。
-    private func isConnectionStatusNoise(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        let needles = [
-            "连接已断开",
-            "已断开连接",
-            "正在重连",
-            "重新连接",
-            "记账助手已连接",
-            "已重新连接",
-            "连接中断",
-            "断线重连"
-        ]
-        return needles.contains { trimmed.contains($0) }
-    }
+    private func handleSSEComplete(_ result: Result<Void, ChatSSEError>) {
+        chatTask = nil
 
-    private func handleSocketClosed() {
-        connected = false
-        isSocketConnecting = false
-        // 断连时若仍在等待回复，必须解锁输入，否则重连后会永久卡在「助手正在回复」。
-        let interruptedReply = waitingReply || streamingMsgId != nil
-        let interruptToast: String = {
-            if !pendingOutboundIds.isEmpty {
-                return "连接中断，缓存消息将在恢复后继续发送"
+        switch result {
+        case .success:
+            // 正常结束应由 message_end / error 事件解锁；流异常提前结束则提示重发。
+            if waitingReply {
+                finishInterruptedReply(showToast: true, toast: "已中断，请重发")
             }
-            return "连接中断，请重新发送"
-        }()
-        finishInterruptedReply(
-            showToast: interruptedReply && !socket.wasIntentionalClose,
-            toast: interruptToast
-        )
-
-        if socket.wasIntentionalClose { return }
-        guard !handlingClose else { return }
-        handlingClose = true
-
-        Task {
-            defer { handlingClose = false }
-            if stage == .connecting {
-                let stillValid = await checkSessionStillValid()
-                if !stillValid {
-                    await forceToLogin("未登录或会话已失效")
+        case .failure(let error):
+            switch error {
+            case .cancelled:
+                if waitingReply {
+                    finishInterruptedReply(showToast: true, toast: "已中断，请重发")
+                }
+            case .http(let status, let message):
+                if status == 401 {
+                    Task { await forceToLogin(message) }
                     return
                 }
-                reconnectAttempts += 1
-                if reconnectAttempts >= 3 {
-                    stage = .login
-                    authError = "连接失败，请确认 easyaccount-agent 已启动"
-                    reconnectAttempts = 0
+                if status == 409 {
+                    // 本轮未真正开始；解锁后用户可在服务端 busy 释放后重试。
+                    finishInterruptedReply(showToast: true, toast: message)
                     return
                 }
-                let delay = UInt64(800 * reconnectAttempts) * 1_000_000
-                reconnectTask = Task {
-                    try? await Task.sleep(nanoseconds: delay)
-                    guard !Task.isCancelled else { return }
-                    connectWs()
-                }
-                return
-            }
-
-            if stage == .live {
-                // 断线后后台静默重连，不在对话中展示断开/重连提示
-                let stillValid = await checkSessionStillValid()
-                if !stillValid {
-                    await forceToLogin("会话已失效（可能被其他设备登录踢下线）")
-                    return
-                }
-                reconnectAttempts += 1
-                let delayMs = min(8000, 600 * reconnectAttempts)
-                reconnectTask = Task {
-                    try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-                    guard !Task.isCancelled else { return }
-                    connectWs()
-                }
+                pushMessage(ChatMessage(id: nextId(), kind: .error, text: message))
+                finishInterruptedReply(showToast: false)
+            case .emptyContent, .invalidURL, .transport:
+                pushMessage(ChatMessage(id: nextId(), kind: .error, text: error.localizedDescription))
+                finishInterruptedReply(showToast: false)
             }
         }
     }
 
-    private func enqueuePending(_ text: String) {
-        let id = nextId()
-        pushMessage(ChatMessage(id: id, kind: .user, text: text, pending: true))
-        pendingOutboundIds.append(id)
-    }
-
-    /// 真正通过 WebSocket 发出一条用户消息；失败则重新入队头部等待重试。
-    private func dispatchOutbound(text: String, messageId: Int?) {
-        guard socket.sendChat(text) else {
-            if let messageId {
-                requeuePending(messageId, text: text)
-            } else {
-                enqueuePending(text)
-            }
-            if connected {
-                showToast("发送失败，将自动重试")
-                schedulePendingFlushRetry()
-            } else {
-                showToast("已加入待发送，连接恢复后自动发送")
-            }
-            return
-        }
-        if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
-            messages[idx].pending = false
-        } else {
-            pushMessage(ChatMessage(id: nextId(), kind: .user, text: text))
-        }
-        beginWaitingReply()
-    }
-
-    private func schedulePendingFlushRetry() {
-        Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            guard !Task.isCancelled else { return }
-            flushPendingOutbound()
-        }
-    }
-
-    /// 连接可用且空闲时，按入队顺序逐条发送（等上一条回复结束再发下一条）。
-    private func flushPendingOutbound() {
-        guard connected, !waitingReply else { return }
-        guard let id = pendingOutboundIds.first else { return }
-
-        guard let message = messages.first(where: { $0.id == id && $0.kind == .user }) else {
-            pendingOutboundIds.removeFirst()
-            flushPendingOutbound()
-            return
-        }
-
-        pendingOutboundIds.removeFirst()
-        dispatchOutbound(text: message.text, messageId: id)
-    }
-
-    private func requeuePending(_ messageId: Int, text: String) {
-        if let idx = messages.firstIndex(where: { $0.id == messageId }) {
-            messages[idx].pending = true
-            messages[idx].text = text
-        } else {
-            pushMessage(ChatMessage(id: messageId, kind: .user, text: text, pending: true))
-        }
-        if !pendingOutboundIds.contains(messageId) {
-            pendingOutboundIds.insert(messageId, at: 0)
+    private func stopChat(toast: String?) {
+        guard chatTask != nil || waitingReply || streamingMsgId != nil else { return }
+        chatGeneration += 1
+        chatClient.cancel()
+        chatTask = nil
+        if waitingReply || streamingMsgId != nil {
+            finishInterruptedReply(showToast: toast != nil, toast: toast ?? "已中断，请重发")
         }
     }
 
@@ -662,9 +531,7 @@ final class EasyAccountViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: replyTimeoutNanoseconds)
             guard !Task.isCancelled else { return }
             guard waitingReply else { return }
-            finishInterruptedReply(showToast: true, toast: "回复超时，请重试")
-            // 超时后若仍有缓存，继续尝试后续消息。
-            flushPendingOutbound()
+            stopChat(toast: "回复超时，请重试")
         }
     }
 
@@ -677,7 +544,7 @@ final class EasyAccountViewModel: ObservableObject {
     /// 中断进行中的回复：结束 streaming、解锁输入，必要时 toast 提示重试。
     private func finishInterruptedReply(
         showToast: Bool,
-        toast: String = "连接中断，请重新发送"
+        toast: String = "已中断，请重发"
     ) {
         if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
             let text = messages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -694,25 +561,10 @@ final class EasyAccountViewModel: ObservableObject {
         }
     }
 
-    private func checkSessionStillValid() async -> Bool {
-        guard !token.isEmpty else { return false }
-        do {
-            let me = try await AuthService.fetchMe(httpBase: httpBase, token: token)
-            currentUser = me
-            SessionStore.persistSession(token: token, user: me)
-            return true
-        } catch let error as APIError where error.status == 401 {
-            return false
-        } catch {
-            return true
-        }
-    }
-
     private func forceToLogin(_ message: String) async {
         guard !sessionInvalidHandled else { return }
         sessionInvalidHandled = true
-        reconnectTask?.cancel()
-        socket.disconnect(intentional: true)
+        stopChat(toast: nil)
         SessionStore.clearSession()
         token = ""
         currentUser = nil
@@ -729,11 +581,10 @@ final class EasyAccountViewModel: ObservableObject {
         messages = []
         authError = ""
         connected = false
-        isSocketConnecting = false
         endWaitingReply()
         inputText = ""
         streamingMsgId = nil
-        pendingOutboundIds = []
+        chatGeneration += 1
     }
 
     private func pushMessage(_ message: ChatMessage) {
@@ -759,24 +610,5 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func normalizedPhone() -> String {
         phoneNumber.filter(\.isNumber)
-    }
-}
-
-extension EasyAccountViewModel: ChatWebSocketDelegate {
-    func chatWebSocketDidOpen(_ socket: ChatWebSocket) {
-        // live stage is driven by server `connected` event, matching web client
-    }
-
-    func chatWebSocket(_ socket: ChatWebSocket, didReceive event: ServerEvent) {
-        handleServerMessage(event)
-    }
-
-    func chatWebSocket(_ socket: ChatWebSocket, didCloseWith code: URLSessionWebSocketTask.CloseCode) {
-        handleSocketClosed()
-    }
-
-    func chatWebSocket(_ socket: ChatWebSocket, didFailWith error: Error) {
-        // browsers hide handshake detail; close path + /me classify auth vs network
-        handleSocketClosed()
     }
 }

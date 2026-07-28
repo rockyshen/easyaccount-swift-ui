@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EasyAccountRootView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     private let menuWidthRatio: CGFloat = 0.78
 
@@ -81,6 +82,9 @@ struct EasyAccountRootView: View {
         .preferredColorScheme(vm.appearanceMode.preferredColorScheme)
         .onAppear { vm.onAppear() }
         .onDisappear { vm.onDisappear() }
+        .onChange(of: scenePhase) { _, phase in
+            vm.handleScenePhase(phase)
+        }
     }
 
     @ViewBuilder
@@ -102,15 +106,15 @@ struct EasyAccountRootView: View {
     }
 
     private var isChatStage: Bool {
-        vm.stage == .live || vm.stage == .connecting
+        vm.stage == .live
     }
 
     private var connectionDotKind: ConnectionStatusDot.Kind {
+        if vm.waitingReply {
+            return .connecting
+        }
         if vm.connected {
             return .connected
-        }
-        if vm.isSocketConnecting {
-            return .connecting
         }
         return .disconnected
     }
@@ -267,12 +271,6 @@ struct EasyAccountRootView: View {
             CenterStatusView(text: "正在恢复登录状态…")
         case .login:
             LoginView()
-        case .connecting:
-            ZStack {
-                ChatView()
-                CenterStatusView(text: "正在连接记账助手…")
-                    .background(EATheme.background.opacity(0.72))
-            }
         case .live:
             ChatView()
         }

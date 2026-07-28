@@ -174,7 +174,7 @@ struct ChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            if voiceMode {
+            if voiceMode, !vm.waitingReply {
                 voiceComposerBar
             } else {
                 textComposerBar
@@ -217,12 +217,21 @@ struct ChatView: View {
                 sendFromComposer()
             }
 
-            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !vm.waitingReply {
                 composerCircleButton(systemName: "dot.radiowaves.right") {
                     Task { await enterVoiceMode() }
                 }
-                .disabled(vm.waitingReply)
-                .opacity(vm.waitingReply ? 0.45 : 1)
+            } else if vm.waitingReply {
+                Button {
+                    vm.stopGeneration()
+                } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(EATheme.danger)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("停止生成")
             } else {
                 Button {
                     sendFromComposer()
@@ -232,7 +241,7 @@ struct ChatView: View {
                         .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
                         .frame(width: 36, height: 36)
                 }
-                .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .buttonStyle(.plain)
             }
         }
@@ -366,7 +375,6 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        // 断连时也允许语音录入；发送仍走队列/连接校验。
         guard !vm.waitingReply, !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
@@ -442,7 +450,7 @@ struct ChatView: View {
     }
 }
 
-/// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
+/// 右上角会话状态圆点：绿=已登录，黄闪=生成中，红=未就绪。
 struct ConnectionStatusDot: View {
     enum Kind: Equatable {
         case connected
@@ -464,9 +472,9 @@ struct ConnectionStatusDot: View {
 
     private var accessibilityText: String {
         switch kind {
-        case .connected: return "已连接"
-        case .connecting: return "连接中"
-        case .disconnected: return "已断开"
+        case .connected: return "已登录"
+        case .connecting: return "生成中"
+        case .disconnected: return "未就绪"
         }
     }
 
@@ -620,7 +628,7 @@ struct MessageBubble: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+                    .background(EATheme.blue)
                     .clipShape(
                         UnevenRoundedRectangle(
                             topLeadingRadius: 18,
@@ -645,21 +653,10 @@ struct MessageBubble: View {
                     .onLongPressGesture(minimumDuration: 0.35) {
                         onUserLongPressCopy?()
                     }
-
-                if message.pending {
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("待发送")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(EATheme.secondary)
-                    .padding(.trailing, 4)
-                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
-            .accessibilityHint(message.pending ? "待连接恢复后自动发送" : "轻点回填到输入框，长按复制")
+            .accessibilityHint("轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)

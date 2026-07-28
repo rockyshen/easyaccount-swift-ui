@@ -343,16 +343,6 @@ struct LoginView: View {
                                 .padding(12)
                                 .background(EATheme.inputFill)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                            fieldLabel("WebSocket")
-                            TextField("ws://118.25.46.207:6088", text: $vm.wsUrl)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .font(.system(size: 14))
-                                .foregroundStyle(EATheme.label)
-                                .padding(12)
-                                .background(EATheme.inputFill)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                     }
 

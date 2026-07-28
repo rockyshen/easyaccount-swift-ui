@@ -2,13 +2,13 @@
 
 智能记账（EasyAccount）SwiftUI iOS 客户端。
 
-按 Web 端 `EasyAccountAgent` 能力复现：**登录/注册、会话恢复、WebSocket 流式对话**；UI 对齐对话式交互（登录首屏 / 手机号流程 / 侧栏 / 欢迎引导），支持浅色 / 暗色 / 跟随系统。
+按 Web 端 `EasyAccountAgent` 能力复现：**登录/注册、会话恢复、SSE 流式对话**；UI 对齐对话式交互（登录首屏 / 手机号流程 / 侧栏 / 欢迎引导），支持浅色 / 暗色 / 跟随系统。
 
 ## 要求
 
 - macOS + Xcode 15+
 - iOS 17.0+
-- 可访问的 `easyaccount-agent` 后端（HTTP + WebSocket）
+- 可访问的 `easyaccount-agent` 后端（HTTP + SSE）
 
 ## 打开与运行
 
@@ -20,9 +20,8 @@
 默认连接：
 
 - HTTP：`http://118.25.46.207:6088`
-- WS：`ws://118.25.46.207:6088`
 
-可在登录页 →「使用账号密码登录」→「连接设置」中修改。本地联调可改回 `127.0.0.1`。
+可在登录页 →「使用账号密码登录」→「连接设置」中修改。本地联调可改回 `127.0.0.1:8088`。
 
 登录入口：
 
@@ -37,10 +36,10 @@
 | 能力 | 说明 |
 |------|------|
 | 登录 / 注册 | `POST /api/auth/login`、`/api/auth/register` |
-| 会话恢复 | `GET /api/auth/me` + UserDefaults 持久化 token |
+| 会话恢复 | `GET /api/auth/me` + Keychain / UserDefaults 持久化 token |
 | 退出 | `POST /api/auth/logout` |
-| 对话 | `WS /ws?token=…`（`chat` / `connected` / `message_delta` / `message_end` / `error`） |
-| 重连 | 连接失败与断线后校验会话并退避重连 |
+| 对话 | `POST /api/chat` SSE（`started` / `message_delta` / `message_end` / `error`） |
+| 取消生成 | 取消 URLSessionTask，服务端释放 busy |
 
 ## 目录
 
