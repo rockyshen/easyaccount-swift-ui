@@ -4,6 +4,7 @@ enum SessionStore {
     private static let tokenKey = "easyaccount_agent_token"
     private static let userKey = "easyaccount_agent_user"
     private static let appearanceKey = "easyaccount_appearance_mode"
+    private static let chatMessagesKeyPrefix = "easyaccount_chat_messages_"
 
     static func getStoredToken() -> String {
         UserDefaults.standard.string(forKey: tokenKey) ?? ""
@@ -38,5 +39,37 @@ enum SessionStore {
 
     static func persistAppearanceMode(_ mode: AppearanceMode) {
         UserDefaults.standard.set(mode.rawValue, forKey: appearanceKey)
+    }
+
+    // MARK: - Chat transcript
+
+    static func persistChatMessages(_ messages: [ChatMessage], userId: String) {
+        let key = chatMessagesKey(userId)
+        // 落盘时去掉 streaming，避免恢复后假打字机状态。
+        let snapshot = messages.map {
+            ChatMessage(id: $0.id, kind: $0.kind, text: $0.text, streaming: false, pending: $0.pending)
+        }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    static func loadChatMessages(userId: String) -> [ChatMessage] {
+        let key = chatMessagesKey(userId)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let list = try? JSONDecoder().decode([ChatMessage].self, from: data) else {
+            return []
+        }
+        return list.map {
+            ChatMessage(id: $0.id, kind: $0.kind, text: $0.text, streaming: false, pending: $0.pending)
+        }
+    }
+
+    static func clearChatMessages(userId: String) {
+        UserDefaults.standard.removeObject(forKey: chatMessagesKey(userId))
+    }
+
+    private static func chatMessagesKey(_ userId: String) -> String {
+        let safe = userId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return chatMessagesKeyPrefix + (safe.isEmpty ? "anonymous" : safe)
     }
 }

@@ -1,13 +1,13 @@
 import Foundation
 
-enum ChatMessageKind: String, Equatable {
+enum ChatMessageKind: String, Equatable, Codable {
     case system
     case assistant
     case user
     case error
 }
 
-struct ChatMessage: Identifiable, Equatable {
+struct ChatMessage: Identifiable, Equatable, Codable {
     let id: Int
     var kind: ChatMessageKind
     var text: String
