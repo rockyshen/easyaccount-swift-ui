@@ -12,24 +12,36 @@ struct ChatMessage: Identifiable, Equatable {
     var kind: ChatMessageKind
     var text: String
     var streaming: Bool = false
-    /// 用户消息已入队、等待连接恢复后再真正发到服务端。
+    /// 已展示在对话中，等待上一轮 SSE 结束后再真正发往服务端。
     var pending: Bool = false
 }
 
-enum ServerEventType: String, Decodable {
-    case connected
-    case messageDelta = "message_delta"
-    case messageEnd = "message_end"
-    case error
-}
-
-struct ServerEvent: Decodable {
-    let type: ServerEventType
+/// SSE `data:` JSON 载荷（与 event 名对应的 type 可作校验）。
+struct ChatServerEvent: Decodable {
+    let type: String?
     let content: String?
     let message: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, content, message
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        if let text = try? container.decodeIfPresent(String.self, forKey: .content) {
+            content = text
+        } else if let number = try? container.decodeIfPresent(Double.self, forKey: .content) {
+            content = String(number)
+        } else if let bool = try? container.decodeIfPresent(Bool.self, forKey: .content) {
+            content = bool ? "true" : "false"
+        } else {
+            content = nil
+        }
+    }
 }
 
 struct ChatOutbound: Encodable {
-    let type: String
     let content: String
 }

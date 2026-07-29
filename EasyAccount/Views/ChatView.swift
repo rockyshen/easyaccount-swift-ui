@@ -115,8 +115,6 @@ struct ChatView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(PressableButtonStyle())
-                        .disabled(vm.waitingReply)
-                        .opacity(vm.waitingReply ? 0.45 : 1)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -209,7 +207,6 @@ struct ChatView: View {
                 axis: .vertical
             )
             .lineLimit(1...5)
-            .disabled(vm.isComposerEditingDisabled)
             .focused($inputFocused)
             .font(.system(size: 16))
             .foregroundStyle(EATheme.label)
@@ -221,8 +218,6 @@ struct ChatView: View {
                 composerCircleButton(systemName: "dot.radiowaves.right") {
                     Task { await enterVoiceMode() }
                 }
-                .disabled(vm.waitingReply)
-                .opacity(vm.waitingReply ? 0.45 : 1)
             } else {
                 Button {
                     sendFromComposer()
@@ -232,7 +227,7 @@ struct ChatView: View {
                         .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
                         .frame(width: 36, height: 36)
                 }
-                .disabled(vm.waitingReply || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!vm.canSend)
                 .buttonStyle(.plain)
             }
         }
@@ -263,7 +258,6 @@ struct ChatView: View {
                 .padding(.vertical, 14)
                 .contentShape(Rectangle())
                 .gesture(holdToTalkGesture)
-                .disabled(vm.waitingReply)
 
             composerCircleButton(systemName: "keyboard") {
                 exitVoiceMode()
@@ -281,7 +275,6 @@ struct ChatView: View {
             radius: isHoldPressing ? 10 : 8,
             y: 3
         )
-        .opacity(vm.waitingReply ? 0.45 : 1)
     }
 
     private var holdBarBackground: Color {
@@ -366,8 +359,7 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        // 断连时也允许语音录入；发送仍走队列/连接校验。
-        guard !vm.waitingReply, !isHoldPressing else { return }
+        guard !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
         // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
@@ -423,7 +415,7 @@ struct ChatView: View {
 
     private func sendFromComposer() {
         let text = vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !vm.waitingReply else { return }
+        guard !text.isEmpty else { return }
         dismissKeyboard()
         vm.sendChat()
     }
@@ -442,7 +434,7 @@ struct ChatView: View {
     }
 }
 
-/// 右上角 WebSocket 连接状态圆点：绿=已连接，黄闪=连接中，红=断开。
+/// 右上角会话状态圆点：绿=已登录，黄闪=生成中，红=未就绪。
 struct ConnectionStatusDot: View {
     enum Kind: Equatable {
         case connected
@@ -464,9 +456,9 @@ struct ConnectionStatusDot: View {
 
     private var accessibilityText: String {
         switch kind {
-        case .connected: return "已连接"
-        case .connecting: return "连接中"
-        case .disconnected: return "已断开"
+        case .connected: return "已登录"
+        case .connecting: return "生成中"
+        case .disconnected: return "未就绪"
         }
     }
 
@@ -665,7 +657,7 @@ struct MessageBubble: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
-            .accessibilityHint(message.pending ? "待连接恢复后自动发送" : "轻点回填到输入框，长按复制")
+            .accessibilityHint(message.pending ? "等待上一条回复结束后自动发送" : "轻点回填到输入框，长按复制")
 
         case .error:
             Text(message.text)

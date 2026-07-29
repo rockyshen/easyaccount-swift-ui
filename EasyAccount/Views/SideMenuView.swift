@@ -75,7 +75,7 @@ struct SideMenuView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(EATheme.label)
                     .lineLimit(1)
-                Text(vm.connected ? "在线 · 记账助手已连接" : "连接中…")
+                Text(vm.connected ? "在线 · 记账助手已就绪" : "未登录")
                     .font(.system(size: 12))
                     .foregroundStyle(EATheme.secondary)
             }
