@@ -434,6 +434,7 @@ struct ChatView: View {
     }
 }
 
+<<<<<<< HEAD
 /// 右上角会话状态圆点：绿=已登录，黄闪=生成中，红=未就绪。
 struct ConnectionStatusDot: View {
     enum Kind: Equatable {
@@ -534,6 +535,8 @@ struct ConnectionStatusDot: View {
     }
 }
 
+=======
+>>>>>>> origin/cursor/sse-chat-persist-0bc6
 /// 按住说话时的蓝色声波提示（取消态变为灰色）。
 struct VoiceSoundWaveView: View {
     var isActive: Bool

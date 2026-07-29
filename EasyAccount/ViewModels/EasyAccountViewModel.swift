@@ -81,9 +81,21 @@ final class EasyAccountViewModel: ObservableObject {
     private var pendingOutboundIds: [Int] = []
     /// 当前正在通过 SSE 发送的用户消息 id（用于 409 时重新入队）。
     private var currentOutboundMessageId: Int?
+    /// 避免进前台重复 bootstrap 把聊天页卸掉。
+    private var didBootstrap = false
+    private var persistChatTask: Task<Void, Never>?
 
     /// 与服务端约 300s 超时对齐。
     private let replyTimeoutNanoseconds: UInt64 = 300_000_000_000
+
+    private var chatStorageUserId: String {
+        if let id = currentUser?.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
+            return id
+        }
+        let name = currentUser?.displayName ?? ""
+        if !name.isEmpty { return "name:\(name)" }
+        return "anonymous"
+    }
 
     var canSubmitAuth: Bool {
         let name = loginName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -157,19 +169,33 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     func onAppear() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
         Task { await bootstrap() }
     }
 
     func onDisappear() {
+        // 进后台也会触发 onDisappear，此处只落盘，不取消 SSE（由 scenePhase 处理）。
         toastTask?.cancel()
-        stopChat(toast: nil)
+        persistChatMessagesNow()
     }
 
-    /// App 进后台可能断流；回前台若仍在等待则提示重发。
+    /// 进后台：断流但保留已生成的打字机内容；回前台：不重复 bootstrap。
     func handleScenePhase(_ phase: ScenePhase) {
-        guard phase == .background else { return }
-        guard waitingReply else { return }
-        stopChat(toast: "已中断，请重发")
+        switch phase {
+        case .background:
+            interruptStreamPreservingPartial(
+                showToast: waitingReply || streamingMsgId != nil,
+                toast: "连接已中断，已保留当前回复"
+            )
+            persistChatMessagesNow()
+        case .active:
+            if stage == .live, !waitingReply {
+                flushPendingOutbound()
+            }
+        default:
+            break
+        }
     }
 
     func switchAuthMode(_ mode: AuthMode) {
@@ -423,6 +449,7 @@ final class EasyAccountViewModel: ObservableObject {
     private func enterLive() {
         connected = true
         stage = .live
+        restoreChatMessagesIfNeeded()
     }
 
     // MARK: - SSE chat
@@ -496,6 +523,7 @@ final class EasyAccountViewModel: ObservableObject {
             } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].text += chunk
             }
+            schedulePersistChatMessages()
         case .end(let content):
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 if !content.isEmpty {
@@ -507,6 +535,7 @@ final class EasyAccountViewModel: ObservableObject {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
             endWaitingReply()
+            persistChatMessagesNow()
             flushPendingOutbound()
         case .error(let message):
             let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -516,6 +545,7 @@ final class EasyAccountViewModel: ObservableObject {
                 streamingMsgId = nil
             }
             endWaitingReply()
+            persistChatMessagesNow()
             flushPendingOutbound()
         }
     }
@@ -541,11 +571,11 @@ final class EasyAccountViewModel: ObservableObject {
                     return
                 }
                 if status == 409 {
-                    // 服务端仍忙：把本轮用户消息重新插回队列头部，稍后自动重试。
+                    // 服务端仍忙：把本轮用户消息重新插回队列头部；勿立刻 flush，稍后重试。
                     if let id = currentOutboundMessageId {
                         requeuePending(id)
                     }
-                    finishInterruptedReply(showToast: true, toast: message)
+                    finishInterruptedReply(showToast: true, toast: message, flushQueue: false)
                     schedulePendingFlushRetry()
                     return
                 }
@@ -575,13 +605,27 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     private func stopChat(toast: String?) {
-        guard chatTask != nil || waitingReply || streamingMsgId != nil else { return }
+        interruptStreamPreservingPartial(
+            showToast: toast != nil,
+            toast: toast ?? "已中断，请重发",
+            flushQueue: true
+        )
+    }
+
+    /// 取消 SSE，但保留已打出的助手文本（进后台 / 取消时不丢回复）。
+    private func interruptStreamPreservingPartial(
+        showToast: Bool,
+        toast: String = "已中断，请重发",
+        flushQueue: Bool = false
+    ) {
+        guard chatTask != nil || waitingReply || streamingMsgId != nil else {
+            if showToast { self.showToast(toast) }
+            return
+        }
         chatGeneration += 1
         chatClient.cancel()
         chatTask = nil
-        if waitingReply || streamingMsgId != nil {
-            finishInterruptedReply(showToast: toast != nil, toast: toast ?? "已中断，请重发")
-        }
+        finishInterruptedReply(showToast: showToast, toast: toast, flushQueue: flushQueue)
     }
 
     private func beginWaitingReply() {
@@ -602,10 +646,11 @@ final class EasyAccountViewModel: ObservableObject {
         replyTimeoutTask = nil
     }
 
-    /// 中断进行中的回复：结束 streaming；保留发送队列，空闲后继续 flush。
+    /// 中断进行中的回复：结束 streaming；默认保留半成品文本。
     private func finishInterruptedReply(
         showToast: Bool,
-        toast: String = "已中断，请重发"
+        toast: String = "已中断，请重发",
+        flushQueue: Bool = true
     ) {
         if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
             let text = messages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -621,7 +666,10 @@ final class EasyAccountViewModel: ObservableObject {
         if showToast {
             self.showToast(toast)
         }
-        flushPendingOutbound()
+        persistChatMessagesNow()
+        if flushQueue {
+            flushPendingOutbound()
+        }
     }
 
     private func forceToLogin(_ message: String) async {
@@ -641,6 +689,7 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     private func resetChatState() {
+        persistChatTask?.cancel()
         messages = []
         authError = ""
         connected = false
@@ -652,8 +701,34 @@ final class EasyAccountViewModel: ObservableObject {
         chatGeneration += 1
     }
 
+    private func restoreChatMessagesIfNeeded() {
+        guard messages.isEmpty else { return }
+        let loaded = SessionStore.loadChatMessages(userId: chatStorageUserId)
+        guard !loaded.isEmpty else { return }
+        messages = loaded
+        pendingOutboundIds = loaded
+            .filter { $0.kind == .user && $0.pending }
+            .map(\.id)
+    }
+
+    private func schedulePersistChatMessages() {
+        persistChatTask?.cancel()
+        persistChatTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            persistChatMessagesNow()
+        }
+    }
+
+    private func persistChatMessagesNow() {
+        persistChatTask?.cancel()
+        persistChatTask = nil
+        SessionStore.persistChatMessages(messages, userId: chatStorageUserId)
+    }
+
     private func pushMessage(_ message: ChatMessage) {
         messages.append(message)
+        schedulePersistChatMessages()
     }
 
     private func nextId() -> Int {
