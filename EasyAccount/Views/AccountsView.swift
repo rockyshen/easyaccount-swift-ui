@@ -259,11 +259,14 @@ struct AccountsView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
                 }
+                .eaHideSharedBackground()
+
                 ToolbarItem(placement: .topBarTrailing) {
                     ManagementCircleIconButton(systemName: "plus") {
                         vm.openCreate()
                     }
                 }
+                .eaHideSharedBackground()
             }
             .task { await vm.load() }
             .refreshable { await vm.load(force: true) }

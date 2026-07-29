@@ -67,6 +67,7 @@ struct DashboardView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
                 }
+                .eaHideSharedBackground()
             }
             .task { await vm.load() }
             .refreshable { await vm.load() }
