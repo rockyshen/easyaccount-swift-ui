@@ -304,8 +304,7 @@ struct CenterStatusView: View {
     }
 }
 
-/// 管理页导航栏圆形图标按钮：半透明玻璃单圆。
-/// 只有一个 Circle 图层，避免实心底色叠重阴影产生的多层圆观感。
+/// 管理页 / 聊天顶栏圆形图标按钮：单层实心圆，避免浅色下多层描边叠出「甜甜圈」。
 struct ManagementCircleIconButton: View {
     let systemName: String
     var fontSize: CGFloat = 16
@@ -317,17 +316,7 @@ struct ManagementCircleIconButton: View {
                 .font(.system(size: fontSize, weight: .semibold))
                 .foregroundStyle(EATheme.label)
                 .frame(width: 36, height: 36)
-                .background {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Circle().fill(EATheme.glassFill)
-                        }
-                        .overlay {
-                            Circle().strokeBorder(EATheme.glassStroke, lineWidth: 0.8)
-                        }
-                        .shadow(color: EATheme.glassShadow, radius: 4, y: 1)
-                }
+                .background(EATheme.surfaceElevated, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(PressableButtonStyle())
