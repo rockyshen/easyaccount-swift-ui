@@ -155,6 +155,7 @@ struct CategoriesView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
                 }
+                .eaHideSharedBackground()
             }
             .task { await vm.loadActions() }
             .refreshable { await vm.loadActions(force: true) }

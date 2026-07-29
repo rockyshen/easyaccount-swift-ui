@@ -304,7 +304,8 @@ struct CenterStatusView: View {
     }
 }
 
-/// 管理页 / 聊天顶栏圆形图标按钮：单层实心圆，避免浅色下多层描边叠出「甜甜圈」。
+/// 管理页 / 聊天顶栏圆形图标按钮：单层实心圆（浅色 / 深色一致）。
+/// 放进 Toolbar 时需配合 `eaHideSharedBackground()`，否则系统玻璃底会再套一层圆环。
 struct ManagementCircleIconButton: View {
     let systemName: String
     var fontSize: CGFloat = 16
@@ -328,6 +329,18 @@ struct ManagementBackButton: View {
 
     var body: some View {
         ManagementCircleIconButton(systemName: "chevron.left", fontSize: 15, action: action)
+    }
+}
+
+extension ToolbarContent {
+    /// 隐藏 iOS 26+ 工具栏 Liquid Glass 共享背景，避免与自定义圆形按钮叠成「甜甜圈」。
+    @ToolbarContentBuilder
+    func eaHideSharedBackground() -> some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
     }
 }
 
@@ -361,6 +374,7 @@ struct ComingSoonManagementView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     ManagementBackButton { appVM.closeManagement() }
                 }
+                .eaHideSharedBackground()
             }
         }
     }
