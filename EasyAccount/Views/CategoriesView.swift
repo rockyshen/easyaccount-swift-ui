@@ -134,17 +134,22 @@ struct CategoriesView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            Group {
                 if vm.loadingActions && vm.actions.isEmpty {
                     CenterStatusView(text: "加载分类中…")
                 } else if !vm.errorMessage.isEmpty && vm.actions.isEmpty {
                     errorState
                 } else {
-                    if !vm.actions.isEmpty {
-                        actionPicker
-                        Divider().overlay(EATheme.surfaceElevated)
-                    }
                     typeTree
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            if !vm.actions.isEmpty {
+                                VStack(spacing: 0) {
+                                    actionPicker
+                                    Divider().overlay(EATheme.surfaceElevated)
+                                }
+                                .background(EATheme.background)
+                            }
+                        }
                 }
             }
             .background(EATheme.background.ignoresSafeArea())
@@ -187,10 +192,10 @@ struct CategoriesView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
         }
-        // 横向 ScrollView 在 VStack 中默认会吃掉全部纵向空间，造成大块空白。
-        .fixedSize(horizontal: false, vertical: true)
+        // 固定高度，避免横向 ScrollView 在纵向撑出大块空白。
+        .frame(maxHeight: 68)
     }
 
     @ViewBuilder
@@ -208,15 +213,23 @@ struct CategoriesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            // 与账户管理一致：insetGrouped List；压掉 inline 导航下自动插入的顶部 Section 空白。
             List {
-                ForEach(vm.types) { node in
-                    TypeNodeRow(node: node)
-                        .listRowBackground(EATheme.surface)
+                Section {
+                    ForEach(vm.types) { node in
+                        TypeNodeRow(node: node)
+                            .listRowBackground(EATheme.surface)
+                    }
+                } header: {
+                    Spacer(minLength: 0)
+                        .frame(height: 0)
+                        .listRowInsets(EdgeInsets())
                 }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .contentMargins(.top, 0, for: .scrollContent)
+            .environment(\.defaultMinListHeaderHeight, 0)
+            .contentMargins(.top, 8, for: .scrollContent)
         }
     }
 
