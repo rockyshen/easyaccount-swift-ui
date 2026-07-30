@@ -5,6 +5,7 @@ enum SessionStore {
     private static let userKey = "easyaccount_agent_user"
     private static let appearanceKey = "easyaccount_appearance_mode"
     private static let chatMessagesKeyPrefix = "easyaccount_chat_messages_"
+    private static let streamingBubbleKeyPrefix = "easyaccount_streaming_bubble_"
 
     static func getStoredToken() -> String {
         UserDefaults.standard.string(forKey: tokenKey) ?? ""
@@ -66,10 +67,41 @@ enum SessionStore {
 
     static func clearChatMessages(userId: String) {
         UserDefaults.standard.removeObject(forKey: chatMessagesKey(userId))
+        clearStreamingBubble(userId: userId)
+    }
+
+    // MARK: - Incomplete SSE bubble (resume cursor)
+
+    static func persistStreamingBubble(_ state: StreamingBubbleState?, userId: String) {
+        let key = streamingBubbleKey(userId)
+        guard let state else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    static func loadStreamingBubble(userId: String) -> StreamingBubbleState? {
+        let key = streamingBubbleKey(userId)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let state = try? JSONDecoder().decode(StreamingBubbleState.self, from: data) else {
+            return nil
+        }
+        return state
+    }
+
+    static func clearStreamingBubble(userId: String) {
+        UserDefaults.standard.removeObject(forKey: streamingBubbleKey(userId))
     }
 
     private static func chatMessagesKey(_ userId: String) -> String {
         let safe = userId.trimmingCharacters(in: .whitespacesAndNewlines)
         return chatMessagesKeyPrefix + (safe.isEmpty ? "anonymous" : safe)
+    }
+
+    private static func streamingBubbleKey(_ userId: String) -> String {
+        let safe = userId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return streamingBubbleKeyPrefix + (safe.isEmpty ? "anonymous" : safe)
     }
 }

@@ -215,8 +215,22 @@ struct ChatView: View {
             }
 
             if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                composerCircleButton(systemName: "dot.radiowaves.right") {
-                    Task { await enterVoiceMode() }
+                if vm.waitingReply {
+                    // 仅用户点停止才调服务端 cancel；进后台断连不会走这里。
+                    Button {
+                        vm.stopGeneration()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(EATheme.label)
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("停止生成")
+                } else {
+                    composerCircleButton(systemName: "dot.radiowaves.right") {
+                        Task { await enterVoiceMode() }
+                    }
                 }
             } else {
                 Button {

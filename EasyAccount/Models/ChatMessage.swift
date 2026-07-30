@@ -21,15 +21,28 @@ struct ChatServerEvent: Decodable {
     let type: String?
     let content: String?
     let message: String?
+    let streamId: String?
+    let eventId: Int64?
+    /// `resume` 可选字段，客户端可忽略。
+    let afterEventId: Int64?
+    let serverLastEventId: Int64?
+    let status: String?
 
     private enum CodingKeys: String, CodingKey {
-        case type, content, message
+        case type, content, message, streamId, eventId
+        case afterEventId, serverLastEventId, status
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         type = try container.decodeIfPresent(String.self, forKey: .type)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+        streamId = try container.decodeIfPresent(String.self, forKey: .streamId)
+        eventId = Self.decodeInt64(container, forKey: .eventId)
+        afterEventId = Self.decodeInt64(container, forKey: .afterEventId)
+        serverLastEventId = Self.decodeInt64(container, forKey: .serverLastEventId)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+
         if let text = try? container.decodeIfPresent(String.self, forKey: .content) {
             content = text
         } else if let number = try? container.decodeIfPresent(Double.self, forKey: .content) {
@@ -40,6 +53,75 @@ struct ChatServerEvent: Decodable {
             content = nil
         }
     }
+
+    private static func decodeInt64(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> Int64? {
+        if let value = try? container.decodeIfPresent(Int64.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return Int64(value)
+        }
+        if let text = try? container.decodeIfPresent(String.self, forKey: key),
+           let value = Int64(text) {
+            return value
+        }
+        return nil
+    }
+}
+
+/// POST `/api/chat` 在已有 running 流时的 409 体。
+struct ChatBusyError: Decodable, Equatable {
+    let message: String
+    let streamId: String?
+    let lastEventId: Int64?
+    let status: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case message, streamId, lastEventId, status
+    }
+
+    init(message: String, streamId: String? = nil, lastEventId: Int64? = nil, status: String? = nil) {
+        self.message = message
+        self.streamId = streamId
+        self.lastEventId = lastEventId
+        self.status = status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+            ?? "上一条消息仍在处理中"
+        streamId = try container.decodeIfPresent(String.self, forKey: .streamId)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        if let value = try? container.decodeIfPresent(Int64.self, forKey: .lastEventId) {
+            lastEventId = value
+        } else if let value = try? container.decodeIfPresent(Int.self, forKey: .lastEventId) {
+            lastEventId = Int64(value)
+        } else if let text = try? container.decodeIfPresent(String.self, forKey: .lastEventId),
+                  let value = Int64(text) {
+            lastEventId = value
+        } else {
+            lastEventId = nil
+        }
+    }
+}
+
+/// 未完成助手气泡的本地游标（建议随用户持久化）。
+struct StreamingBubbleState: Codable, Equatable {
+    var streamId: String
+    var lastEventId: Int64
+    var assistantText: String
+    /// streaming | completed | failed
+    var status: String
+    /// 本地助手气泡 id，便于恢复时对齐。
+    var messageId: Int?
+
+    static let statusStreaming = "streaming"
+    static let statusCompleted = "completed"
+    static let statusFailed = "failed"
 }
 
 struct ChatOutbound: Encodable {

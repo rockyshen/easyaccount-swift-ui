@@ -81,6 +81,11 @@ final class EasyAccountViewModel: ObservableObject {
     private var pendingOutboundIds: [Int] = []
     /// 当前正在通过 SSE 发送的用户消息 id（用于 409 时重新入队）。
     private var currentOutboundMessageId: Int?
+    /// 本轮流游标（断点续传）。
+    private var activeStreamId: String?
+    private var lastEventId: Int64 = 0
+    /// 本地主动断连以待回前台续传；此时 `.cancelled` 不应定稿失败。
+    private var disconnectForResume = false
     /// 避免进前台重复 bootstrap 把聊天页卸掉。
     private var didBootstrap = false
     private var persistChatTask: Task<Void, Never>?
@@ -180,22 +185,28 @@ final class EasyAccountViewModel: ObservableObject {
         persistChatMessagesNow()
     }
 
-    /// 进后台：断流但保留已生成的打字机内容；回前台：不重复 bootstrap。
+    /// 进后台：只断本地 SSE，不调服务端 cancel；回前台：若未完成则 GET 续传。
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .background:
-            interruptStreamPreservingPartial(
-                showToast: waitingReply || streamingMsgId != nil,
-                toast: "连接已中断，已保留当前回复"
-            )
+            disconnectTransportForResume()
             persistChatMessagesNow()
+            persistStreamingBubbleNow()
         case .active:
-            if stage == .live, !waitingReply {
-                flushPendingOutbound()
+            if stage == .live {
+                resumeIncompleteStreamIfNeeded()
+                if !waitingReply {
+                    flushPendingOutbound()
+                }
             }
         default:
             break
         }
+    }
+
+    /// 用户点「停止」：调服务端 cancel，并定稿本地气泡。
+    func stopGeneration() {
+        Task { await stopGenerationAndCancelRemote(toast: "已停止") }
     }
 
     func switchAuthMode(_ mode: AuthMode) {
@@ -450,6 +461,7 @@ final class EasyAccountViewModel: ObservableObject {
         connected = true
         stage = .live
         restoreChatMessagesIfNeeded()
+        resumeIncompleteStreamIfNeeded()
     }
 
     // MARK: - SSE chat
@@ -477,9 +489,10 @@ final class EasyAccountViewModel: ObservableObject {
         }
         currentOutboundMessageId = outboundId
 
-        beginWaitingReply()
+        beginWaitingReply(resetStreamCursor: true)
         chatGeneration += 1
         let generation = chatGeneration
+        disconnectForResume = false
 
         chatTask = chatClient.start(
             httpBase: httpBase,
@@ -499,6 +512,8 @@ final class EasyAccountViewModel: ObservableObject {
     /// 空闲时按入队顺序逐条发送（等上一轮 message_end / error / 中断后再发下一条）。
     private func flushPendingOutbound() {
         guard !waitingReply else { return }
+        guard !disconnectForResume else { return }
+        guard activeStreamId == nil else { return }
         guard let id = pendingOutboundIds.first else { return }
 
         guard let message = messages.first(where: { $0.id == id && $0.kind == .user }) else {
@@ -513,18 +528,27 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func handleSSEEvent(_ event: SseChatEvent) {
         switch event {
-        case .started:
-            break
-        case .delta(let chunk):
+        case .started(let streamId, let eventId):
+            applyStreamCursor(streamId: streamId, eventId: eventId)
+            persistStreamingBubbleNow()
+        case .delta(let chunk, let streamId, let eventId):
+            if let eventId, lastEventId > 0, eventId <= lastEventId {
+                applyStreamCursor(streamId: streamId, eventId: nil)
+                return
+            }
+            applyStreamCursor(streamId: streamId, eventId: eventId)
             if streamingMsgId == nil {
                 let id = nextId()
                 streamingMsgId = id
                 pushMessage(ChatMessage(id: id, kind: .assistant, text: chunk, streaming: true))
             } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].text += chunk
+                messages[idx].streaming = true
             }
+            persistStreamingBubbleNow()
             schedulePersistChatMessages()
-        case .end(let content):
+        case .end(let content, let streamId, let eventId):
+            applyStreamCursor(streamId: streamId, eventId: eventId)
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 if !content.isEmpty {
                     messages[idx].text = content
@@ -534,16 +558,19 @@ final class EasyAccountViewModel: ObservableObject {
             } else if !content.isEmpty {
                 pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
             }
+            clearStreamCursor(status: StreamingBubbleState.statusCompleted)
             endWaitingReply()
             persistChatMessagesNow()
             flushPendingOutbound()
-        case .error(let message):
+        case .error(let message, let streamId, let eventId):
+            applyStreamCursor(streamId: streamId, eventId: eventId)
             let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
             pushMessage(ChatMessage(id: nextId(), kind: .error, text: text.isEmpty ? "处理失败" : text))
             if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
                 messages[idx].streaming = false
                 streamingMsgId = nil
             }
+            clearStreamCursor(status: StreamingBubbleState.statusFailed)
             endWaitingReply()
             persistChatMessagesNow()
             flushPendingOutbound()
@@ -555,37 +582,90 @@ final class EasyAccountViewModel: ObservableObject {
 
         switch result {
         case .success:
-            // 正常结束应由 message_end / error 事件解锁；流异常提前结束则提示重发。
-            if waitingReply {
-                finishInterruptedReply(showToast: true, toast: "已中断，请重发")
+            // 正常结束应由 message_end / error 事件解锁；流异常提前结束则尝试续传或定稿。
+            if waitingReply, !disconnectForResume {
+                if activeStreamId != nil {
+                    resumeIncompleteStreamIfNeeded()
+                } else {
+                    finishInterruptedReply(showToast: true, toast: "已中断，请重发")
+                }
             }
         case .failure(let error):
             switch error {
             case .cancelled:
+                if disconnectForResume {
+                    // 进后台主动断连：保留游标与打字机状态，等回前台续传。
+                    persistStreamingBubbleNow()
+                    persistChatMessagesNow()
+                    return
+                }
                 if waitingReply {
                     finishInterruptedReply(showToast: true, toast: "已中断，请重发")
                 }
+            case .conflict(let busy):
+                if let id = currentOutboundMessageId {
+                    requeuePending(id)
+                }
+                currentOutboundMessageId = nil
+                endWaitingReply()
+                handleBusyConflict(busy)
+            case .notFound(let message):
+                finalizeExpiredStream(toast: message.isEmpty ? "回复已结束或过期" : "回复已结束或过期")
             case .http(let status, let message):
                 if status == 401 {
                     Task { await forceToLogin(message) }
                     return
                 }
-                if status == 409 {
-                    // 服务端仍忙：把本轮用户消息重新插回队列头部；勿立刻 flush，稍后重试。
-                    if let id = currentOutboundMessageId {
-                        requeuePending(id)
-                    }
-                    finishInterruptedReply(showToast: true, toast: message, flushQueue: false)
-                    schedulePendingFlushRetry()
-                    return
-                }
                 pushMessage(ChatMessage(id: nextId(), kind: .error, text: message))
                 finishInterruptedReply(showToast: false)
             case .emptyContent, .invalidURL, .transport:
+                if disconnectForResume {
+                    persistStreamingBubbleNow()
+                    return
+                }
+                // 传输闪断且仍有 streamId：保留状态并短暂重试续传。
+                if waitingReply, activeStreamId != nil {
+                    disconnectForResume = true
+                    persistStreamingBubbleNow()
+                    Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        await MainActor.run {
+                            self?.resumeIncompleteStreamIfNeeded()
+                        }
+                    }
+                    return
+                }
                 pushMessage(ChatMessage(id: nextId(), kind: .error, text: error.localizedDescription))
                 finishInterruptedReply(showToast: false)
             }
         }
+    }
+
+    private func handleBusyConflict(_ busy: ChatBusyError) {
+        guard let streamId = busy.streamId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !streamId.isEmpty else {
+            showToast(busy.message)
+            schedulePendingFlushRetry()
+            return
+        }
+
+        let local = SessionStore.loadStreamingBubble(userId: chatStorageUserId)
+        let after: Int64
+        if let local, local.streamId == streamId {
+            after = local.lastEventId
+            ensureAssistantBubble(text: local.assistantText, messageId: local.messageId)
+        } else {
+            // 本地未处理过该流：从 0 补齐；勿用 body.lastEventId 以免跳过未展示文本。
+            after = 0
+            ensureAssistantBubble(text: "", messageId: nil)
+        }
+
+        activeStreamId = streamId
+        lastEventId = after
+        disconnectForResume = false
+        beginWaitingReply(resetStreamCursor: false)
+        persistStreamingBubbleNow()
+        startResumeStream(streamId: streamId, afterEventId: after)
     }
 
     private func requeuePending(_ messageId: Int) {
@@ -605,43 +685,145 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     private func stopChat(toast: String?) {
-        interruptStreamPreservingPartial(
+        disconnectForResume = false
+        chatGeneration += 1
+        chatClient.disconnect()
+        chatTask = nil
+        finishInterruptedReply(
             showToast: toast != nil,
             toast: toast ?? "已中断，请重发",
             flushQueue: true
         )
     }
 
-    /// 取消 SSE，但保留已打出的助手文本（进后台 / 取消时不丢回复）。
-    private func interruptStreamPreservingPartial(
-        showToast: Bool,
-        toast: String = "已中断，请重发",
-        flushQueue: Bool = false
-    ) {
-        guard chatTask != nil || waitingReply || streamingMsgId != nil else {
-            if showToast { self.showToast(toast) }
-            return
-        }
+    private func stopGenerationAndCancelRemote(toast: String?) async {
+        guard waitingReply || activeStreamId != nil || chatTask != nil else { return }
+        let streamId = activeStreamId
+        disconnectForResume = false
         chatGeneration += 1
-        chatClient.cancel()
+        chatClient.disconnect()
         chatTask = nil
-        finishInterruptedReply(showToast: showToast, toast: toast, flushQueue: flushQueue)
+
+        if let streamId, !streamId.isEmpty, !token.isEmpty {
+            do {
+                try await chatClient.cancelRemote(httpBase: httpBase, token: token, streamId: streamId)
+            } catch let error as ChatSSEError where error.status == 401 {
+                await forceToLogin(error.localizedDescription)
+                return
+            } catch {
+                // 本地仍定稿；服务端可能已结束。
+            }
+        }
+
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            let text = messages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                messages.remove(at: idx)
+            } else {
+                messages[idx].streaming = false
+            }
+        }
+        streamingMsgId = nil
+        currentOutboundMessageId = nil
+        clearStreamCursor(status: StreamingBubbleState.statusFailed)
+        endWaitingReply()
+        if let toast {
+            showToast(toast)
+        }
+        persistChatMessagesNow()
+        flushPendingOutbound()
     }
 
-    private func beginWaitingReply() {
+    /// 进后台：只断传输，保留 streamId / lastEventId / 打字机文本。
+    private func disconnectTransportForResume() {
+        guard chatTask != nil || (waitingReply && activeStreamId != nil) else { return }
+        guard activeStreamId != nil || streamingMsgId != nil || waitingReply else { return }
+
+        if activeStreamId == nil && streamingMsgId == nil {
+            // 尚未拿到 started：只能断连；回前台若仍 waiting 且无 streamId 则按中断处理。
+            disconnectForResume = waitingReply
+            chatGeneration += 1
+            chatClient.disconnect()
+            chatTask = nil
+            return
+        }
+
+        disconnectForResume = true
+        chatGeneration += 1
+        chatClient.disconnect()
+        chatTask = nil
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            messages[idx].streaming = true
+        }
+        persistStreamingBubbleNow()
+    }
+
+    private func resumeIncompleteStreamIfNeeded() {
+        guard stage == .live else { return }
+        guard !token.isEmpty else { return }
+        guard chatTask == nil else { return }
+
+        let state = currentStreamingState() ?? SessionStore.loadStreamingBubble(userId: chatStorageUserId)
+        guard let state,
+              state.status == StreamingBubbleState.statusStreaming,
+              !state.streamId.isEmpty else {
+            if disconnectForResume, waitingReply, activeStreamId == nil {
+                // 后台时还没 started，无法续传。
+                disconnectForResume = false
+                finishInterruptedReply(showToast: true, toast: "连接已中断，请重发")
+            }
+            return
+        }
+
+        ensureAssistantBubble(text: state.assistantText, messageId: state.messageId)
+        activeStreamId = state.streamId
+        lastEventId = state.lastEventId
+        disconnectForResume = false
+        beginWaitingReply(resetStreamCursor: false)
+        startResumeStream(streamId: state.streamId, afterEventId: state.lastEventId)
+    }
+
+    private func startResumeStream(streamId: String, afterEventId: Int64) {
+        chatGeneration += 1
+        let generation = chatGeneration
+        disconnectForResume = false
+
+        chatTask = chatClient.startResume(
+            httpBase: httpBase,
+            token: token,
+            streamId: streamId,
+            afterEventId: afterEventId,
+            onEvent: { [weak self] event in
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEEvent(event)
+            },
+            onComplete: { [weak self] result in
+                guard let self, self.chatGeneration == generation else { return }
+                self.handleSSEComplete(result)
+            }
+        )
+    }
+
+    private func beginWaitingReply(resetStreamCursor: Bool) {
         waitingReply = true
-        streamingMsgId = nil
+        if resetStreamCursor {
+            streamingMsgId = nil
+            activeStreamId = nil
+            lastEventId = 0
+            SessionStore.clearStreamingBubble(userId: chatStorageUserId)
+        }
         replyTimeoutTask?.cancel()
         replyTimeoutTask = Task { [replyTimeoutNanoseconds] in
             try? await Task.sleep(nanoseconds: replyTimeoutNanoseconds)
             guard !Task.isCancelled else { return }
             guard waitingReply else { return }
-            stopChat(toast: "回复超时，请重试")
+            await stopGenerationAndCancelRemote(toast: "回复超时，请重试")
         }
     }
 
     private func endWaitingReply() {
         waitingReply = false
+        disconnectForResume = false
         replyTimeoutTask?.cancel()
         replyTimeoutTask = nil
     }
@@ -662,6 +844,7 @@ final class EasyAccountViewModel: ObservableObject {
         }
         streamingMsgId = nil
         currentOutboundMessageId = nil
+        clearStreamCursor(status: StreamingBubbleState.statusFailed)
         endWaitingReply()
         if showToast {
             self.showToast(toast)
@@ -670,6 +853,121 @@ final class EasyAccountViewModel: ObservableObject {
         if flushQueue {
             flushPendingOutbound()
         }
+    }
+
+    private func finalizeExpiredStream(toast: String) {
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            let text = messages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                messages.remove(at: idx)
+            } else {
+                messages[idx].streaming = false
+            }
+        }
+        streamingMsgId = nil
+        currentOutboundMessageId = nil
+        clearStreamCursor(status: StreamingBubbleState.statusCompleted)
+        endWaitingReply()
+        showToast(toast)
+        persistChatMessagesNow()
+        flushPendingOutbound()
+    }
+
+    private func applyStreamCursor(streamId: String?, eventId: Int64?) {
+        if let streamId {
+            let trimmed = streamId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                activeStreamId = trimmed
+            }
+        }
+        if let eventId, eventId > lastEventId {
+            lastEventId = eventId
+        }
+    }
+
+    private func clearStreamCursor(status: String) {
+        if let streamId = activeStreamId {
+            let text: String = {
+                if let sid = streamingMsgId,
+                   let idx = messages.firstIndex(where: { $0.id == sid }) {
+                    return messages[idx].text
+                }
+                return currentStreamingState()?.assistantText ?? ""
+            }()
+            // 终态写一次快照后清除「未完成」标记。
+            let final = StreamingBubbleState(
+                streamId: streamId,
+                lastEventId: lastEventId,
+                assistantText: text,
+                status: status,
+                messageId: streamingMsgId
+            )
+            if status == StreamingBubbleState.statusStreaming {
+                SessionStore.persistStreamingBubble(final, userId: chatStorageUserId)
+            } else {
+                SessionStore.clearStreamingBubble(userId: chatStorageUserId)
+            }
+        } else {
+            SessionStore.clearStreamingBubble(userId: chatStorageUserId)
+        }
+        activeStreamId = nil
+        lastEventId = 0
+        disconnectForResume = false
+    }
+
+    private func currentStreamingState() -> StreamingBubbleState? {
+        guard let streamId = activeStreamId, !streamId.isEmpty else { return nil }
+        let text: String
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            text = messages[idx].text
+        } else {
+            text = ""
+        }
+        return StreamingBubbleState(
+            streamId: streamId,
+            lastEventId: lastEventId,
+            assistantText: text,
+            status: StreamingBubbleState.statusStreaming,
+            messageId: streamingMsgId
+        )
+    }
+
+    private func persistStreamingBubbleNow() {
+        SessionStore.persistStreamingBubble(currentStreamingState(), userId: chatStorageUserId)
+    }
+
+    private func ensureAssistantBubble(text: String, messageId: Int?) {
+        if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[idx].kind = .assistant
+            if messages[idx].text.isEmpty, !text.isEmpty {
+                messages[idx].text = text
+            } else if !text.isEmpty, messages[idx].text.count < text.count {
+                messages[idx].text = text
+            }
+            messages[idx].streaming = true
+            streamingMsgId = messageId
+            return
+        }
+        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            if messages[idx].text.isEmpty, !text.isEmpty {
+                messages[idx].text = text
+            }
+            messages[idx].streaming = true
+            return
+        }
+        // 找最后一条助手气泡复用（冷启动恢复）。
+        if let idx = messages.lastIndex(where: { $0.kind == .assistant }),
+           messages[idx].text == text || text.isEmpty || messages[idx].text.hasPrefix(text) || text.hasPrefix(messages[idx].text) {
+            if messages[idx].text.count < text.count {
+                messages[idx].text = text
+            }
+            messages[idx].streaming = true
+            streamingMsgId = messages[idx].id
+            return
+        }
+        let id = nextId()
+        streamingMsgId = id
+        pushMessage(ChatMessage(id: id, kind: .assistant, text: text, streaming: true))
     }
 
     private func forceToLogin(_ message: String) async {
@@ -690,6 +988,8 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func resetChatState() {
         persistChatTask?.cancel()
+        // 须在清空 currentUser 之前调用，或先由调用方 clearStreamingBubble。
+        SessionStore.clearStreamingBubble(userId: chatStorageUserId)
         messages = []
         authError = ""
         connected = false
@@ -698,17 +998,35 @@ final class EasyAccountViewModel: ObservableObject {
         streamingMsgId = nil
         pendingOutboundIds = []
         currentOutboundMessageId = nil
+        activeStreamId = nil
+        lastEventId = 0
+        disconnectForResume = false
         chatGeneration += 1
     }
 
     private func restoreChatMessagesIfNeeded() {
         guard messages.isEmpty else { return }
         let loaded = SessionStore.loadChatMessages(userId: chatStorageUserId)
-        guard !loaded.isEmpty else { return }
+        guard !loaded.isEmpty else {
+            restoreStreamingBubbleIntoMessages()
+            return
+        }
         messages = loaded
         pendingOutboundIds = loaded
             .filter { $0.kind == .user && $0.pending }
             .map(\.id)
+        restoreStreamingBubbleIntoMessages()
+    }
+
+    private func restoreStreamingBubbleIntoMessages() {
+        guard let state = SessionStore.loadStreamingBubble(userId: chatStorageUserId),
+              state.status == StreamingBubbleState.statusStreaming,
+              !state.streamId.isEmpty else { return }
+        ensureAssistantBubble(text: state.assistantText, messageId: state.messageId)
+        activeStreamId = state.streamId
+        lastEventId = state.lastEventId
+        waitingReply = true
+        disconnectForResume = true
     }
 
     private func schedulePersistChatMessages() {
@@ -717,6 +1035,7 @@ final class EasyAccountViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
             persistChatMessagesNow()
+            persistStreamingBubbleNow()
         }
     }
 
