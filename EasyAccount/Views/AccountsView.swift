@@ -287,21 +287,26 @@ struct AccountsView: View {
     private var accountList: some View {
         List {
             ForEach(vm.accounts) { account in
-                Button {
-                    vm.openEdit(account)
-                } label: {
-                    AccountRow(account: account)
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(EATheme.surface)
-                .listRowSeparatorTint(EATheme.surfaceElevated)
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    Button(role: .destructive) {
-                        Task { await vm.delete(account) }
-                    } label: {
-                        Label("删除", systemImage: "trash")
+                AccountRow(account: account)
+                    .listRowBackground(EATheme.surface)
+                    .listRowSeparatorTint(EATheme.surfaceElevated)
+                    // 右划（手指右移）→ 编辑
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            vm.openEdit(account)
+                        } label: {
+                            Label("编辑", systemImage: "pencil")
+                        }
+                        .tint(EATheme.blue)
                     }
-                }
+                    // 左划（手指左移）→ 删除
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            Task { await vm.delete(account) }
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
             }
         }
         .listStyle(.insetGrouped)

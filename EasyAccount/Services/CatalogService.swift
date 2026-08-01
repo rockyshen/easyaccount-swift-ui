@@ -21,4 +21,48 @@ enum CatalogService {
         )
         return try APIClient.decode([TypeNodeDTO].self, from: data)
     }
+
+    static func createType(
+        httpBase: String,
+        token: String,
+        request body: CreateTypeRequest
+    ) async throws {
+        let payload = try JSONEncoder().encode(body)
+        // 代理层未开放 POST /api/types，创建走 /api/types/create。
+        let data = try await APIClient.request(
+            method: "POST",
+            path: "/api/types/create",
+            httpBase: httpBase,
+            token: token,
+            body: payload
+        )
+        _ = try? APIClient.decode(OkResponse.self, from: data)
+    }
+
+    static func updateType(
+        httpBase: String,
+        token: String,
+        id: Int,
+        request body: UpdateTypeRequest
+    ) async throws {
+        let payload = try JSONEncoder().encode(body)
+        let data = try await APIClient.request(
+            method: "PUT",
+            path: "/api/types/\(id)",
+            httpBase: httpBase,
+            token: token,
+            body: payload
+        )
+        _ = try? APIClient.decode(OkResponse.self, from: data)
+    }
+
+    static func deleteType(httpBase: String, token: String, id: Int) async throws {
+        let data = try await APIClient.request(
+            method: "DELETE",
+            path: "/api/types/\(id)",
+            httpBase: httpBase,
+            token: token
+        )
+        _ = try? APIClient.decode(OkResponse.self, from: data)
+    }
 }
