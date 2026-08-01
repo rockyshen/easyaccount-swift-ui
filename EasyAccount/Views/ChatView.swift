@@ -180,9 +180,14 @@ struct ChatView: View {
         }
     }
 
+    /// 按住中，或松手后续录/出最终结果中。
+    private var isVoiceCaptureActive: Bool {
+        isHoldPressing || speech.isFinalizing
+    }
+
     private var composer: some View {
         VStack(spacing: 10) {
-            if voiceMode, isHoldPressing {
+            if voiceMode, isVoiceCaptureActive {
                 voiceRecordingHint
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -194,13 +199,14 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, isHoldPressing ? 8 : 10)
+        .padding(.top, isVoiceCaptureActive ? 8 : 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
-        .animation(.easeOut(duration: 0.16), value: isHoldPressing)
+        .animation(.easeOut(duration: 0.16), value: isVoiceCaptureActive)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
+        .animation(.easeOut(duration: 0.12), value: speech.isFinalizing)
         .onDisappear {
-            if speech.isListening {
+            if speech.isListening || speech.isFinalizing {
                 speech.cancel()
             }
             isHoldPressing = false
@@ -276,52 +282,65 @@ struct ChatView: View {
             composerCircleButton(systemName: "plus") {
                 vm.showToast("附件功能即将开放")
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
 
-            Text("按住说话")
+            Text(speech.isFinalizing ? "正在识别…" : "按住说话")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(EATheme.label)
+                .foregroundStyle(speech.isFinalizing ? Color.white.opacity(0.92) : EATheme.label)
                 .opacity(isHoldPressing ? 0 : 1)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .contentShape(Rectangle())
                 .gesture(holdToTalkGesture)
+                .disabled(speech.isFinalizing)
 
             composerCircleButton(systemName: "keyboard") {
                 exitVoiceMode()
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
-            .disabled(speech.isListening)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
+            .disabled(speech.isListening || speech.isFinalizing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(holdBarBackground)
         .clipShape(Capsule())
         .shadow(
-            color: Color.black.opacity(isHoldPressing ? 0.08 : 0.06),
-            radius: isHoldPressing ? 10 : 8,
+            color: Color.black.opacity(isVoiceCaptureActive ? 0.08 : 0.06),
+            radius: isVoiceCaptureActive ? 10 : 8,
             y: 3
         )
     }
 
     private var holdBarBackground: Color {
+        if speech.isFinalizing { return EATheme.blue }
         if !isHoldPressing { return EATheme.surface }
         return willCancelHold ? EATheme.secondary : EATheme.blue
     }
 
     private var voiceRecordingHint: some View {
         VStack(spacing: 10) {
-            VoiceSoundWaveView(isActive: isHoldPressing, isCanceling: willCancelHold)
-                .frame(height: 40)
+            VoiceSoundWaveView(
+                isActive: isVoiceCaptureActive,
+                isCanceling: willCancelHold && !speech.isFinalizing
+            )
+            .frame(height: 40)
 
-            Text(willCancelHold ? "松开取消" : "松开发送，上滑取消")
+            Text(voiceRecordingHintTitle)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(willCancelHold ? EATheme.danger : EATheme.secondary)
+                .foregroundStyle(
+                    willCancelHold && !speech.isFinalizing ? EATheme.danger : EATheme.secondary
+                )
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
+    }
+
+    private var voiceRecordingHintTitle: String {
+        if speech.isFinalizing { return "正在识别…" }
+        if willCancelHold { return "松开取消" }
+        return "松开发送，上滑取消"
     }
 
     private func composerCircleButton(systemName: String, action: @escaping () -> Void) -> some View {
@@ -388,7 +407,7 @@ struct ChatView: View {
     }
 
     private func beginHoldToTalk() {
-        guard !isHoldPressing else { return }
+        guard !isHoldPressing, !speech.isFinalizing else { return }
         isHoldPressing = true
         willCancelHold = false
         // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
@@ -416,18 +435,19 @@ struct ChatView: View {
             return
         }
 
-        let spoken = speech.stop()
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-
-        let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            vm.showToast("没有识别到内容，请再试一次")
-            return
+        // 松手后续录约 1.2s 并等待最终结果，减少句尾丢字。
+        Task {
+            let spoken = await speech.finish(tailSeconds: 1.2)
+            let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                vm.showToast("没有识别到内容，请再试一次")
+                return
+            }
+            // 松开发送：直接发出，保持语音模式便于连续说下一条。
+            vm.inputText = text
+            vm.sendChat()
         }
-
-        // 松开发送：直接发出，保持语音模式便于连续说下一条。
-        vm.inputText = text
-        vm.sendChat()
     }
 
     private var dismissKeyboardDrag: some Gesture {

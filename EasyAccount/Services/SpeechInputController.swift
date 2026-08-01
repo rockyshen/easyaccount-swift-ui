@@ -7,11 +7,20 @@ import Speech
 final class SpeechInputController: ObservableObject {
     @Published private(set) var partialText = ""
     @Published private(set) var isListening = false
+    /// 松手后的续录 / 等待最终结果阶段（UI 可显示「正在识别…」）。
+    @Published private(set) var isFinalizing = false
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private let audioEngine = AVAudioEngine()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var receivedFinal = false
+    private var sessionGeneration = 0
+
+    /// 松手后继续录入的时长，避免吞掉句尾几个字。
+    private let defaultTailSeconds: TimeInterval = 1.2
+    /// 停止送音频后，等待 `isFinal` 的最长时间。
+    private let finalResultTimeoutSeconds: TimeInterval = 2.0
 
     var isAvailable: Bool {
         recognizer?.isAvailable == true
@@ -35,8 +44,11 @@ final class SpeechInputController: ObservableObject {
     }
 
     func start() throws {
-        stopEngine(cancelTask: true)
+        cancel()
         partialText = ""
+        receivedFinal = false
+        sessionGeneration += 1
+        let generation = sessionGeneration
 
         guard let recognizer, recognizer.isAvailable else {
             throw SpeechInputError.recognizerUnavailable
@@ -76,8 +88,12 @@ final class SpeechInputController: ObservableObject {
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.sessionGeneration == generation else { return }
                 if let result {
                     self.partialText = result.bestTranscription.formattedString
+                    if result.isFinal {
+                        self.receivedFinal = true
+                    }
                 }
                 if error != nil {
                     // 松手结束为主；识别器中间错误不强制清空已有 partial
@@ -87,24 +103,59 @@ final class SpeechInputController: ObservableObject {
         }
     }
 
-    /// 结束识别并返回最终文本。
-    @discardableResult
-    func stop() -> String {
-        let text = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// 松手发送：续录一小段尾音，再结束音频并等待最终识别结果。
+    func finish(tailSeconds: TimeInterval? = nil) async -> String {
+        let tail = max(0, tailSeconds ?? defaultTailSeconds)
+        guard recognitionRequest != nil else {
+            return partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let generation = sessionGeneration
+        isFinalizing = true
+        isListening = true
+
+        // 1) 松手后续录，把句尾几个字送进识别器。
+        if audioEngine.isRunning, tail > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(tail * 1_000_000_000))
+        }
+        guard sessionGeneration == generation else { return "" }
+
+        // 2) 声明「没有更多音频」，但不要立刻 cancel task，否则最终结果会被丢掉。
         recognitionRequest?.endAudio()
-        stopEngine(cancelTask: true)
-        recognitionRequest = nil
-        partialText = ""
+        stopEngine(cancelTask: false)
         isListening = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        // 3) 等待 isFinal（最后几个字经常只出现在最终结果里）。
+        let timeoutNanoseconds = UInt64(finalResultTimeoutSeconds * 1_000_000_000)
+        let started = DispatchTime.now().uptimeNanoseconds
+        while !receivedFinal {
+            guard sessionGeneration == generation else { return "" }
+            let elapsed = DispatchTime.now().uptimeNanoseconds &- started
+            if elapsed >= timeoutNanoseconds { break }
+            try? await Task.sleep(nanoseconds: 40_000_000)
+        }
+
+        let text = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        tearDownSession(cancelTask: true)
         return text
     }
 
+    /// 立即停止并丢弃结果（上滑取消）。
     func cancel() {
-        stopEngine(cancelTask: true)
+        sessionGeneration += 1
+        tearDownSession(cancelTask: true)
+    }
+
+    private func tearDownSession(cancelTask: Bool) {
+        stopEngine(cancelTask: cancelTask)
         recognitionRequest = nil
+        if cancelTask {
+            recognitionTask = nil
+        }
         partialText = ""
+        receivedFinal = false
         isListening = false
+        isFinalizing = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
