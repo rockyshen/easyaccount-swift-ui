@@ -155,12 +155,27 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.interactively)
             // 即使内容不足一屏也允许回弹，短对话可轻微上划。
             .scrollBounceBehavior(.always)
+            // 重新打开时默认停在最新消息，而不是历史顶部。
+            .defaultScrollAnchor(.bottom)
+            .onAppear {
+                scrollChatToBottom(proxy: proxy, animated: false)
+            }
             .onChange(of: vm.messages) { _, _ in
-                if let last = vm.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                scrollChatToBottom(proxy: proxy, animated: true)
+            }
+        }
+    }
+
+    private func scrollChatToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        guard let lastId = vm.messages.last?.id else { return }
+        // 等 LazyVStack 完成布局再滚，避免首次打开仍停在顶部。
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(lastId, anchor: .bottom)
                 }
+            } else {
+                proxy.scrollTo(lastId, anchor: .bottom)
             }
         }
     }
