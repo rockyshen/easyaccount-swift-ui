@@ -76,6 +76,11 @@ enum ManagementCache {
         typesFetchedAt[actionId] = Date()
     }
 
+    static func invalidateTypes(for actionId: Int) {
+        typesByActionId[actionId] = nil
+        typesFetchedAt[actionId] = nil
+    }
+
     private static func isFresh(_ date: Date?) -> Bool {
         guard let date else { return false }
         return Date().timeIntervalSince(date) < softTTL

@@ -37,4 +37,62 @@ struct TypeNodeDTO: Codable, Identifiable, Equatable, Sendable {
     var children: [TypeNodeDTO] {
         childrenTypes ?? []
     }
+
+    /// 一级分类在后端用 parent = -1 / null / 0 表示。
+    var isRootLevel: Bool {
+        guard let parent else { return true }
+        return parent <= 0
+    }
+}
+
+struct CreateTypeRequest: Encodable, Sendable {
+    let tname: String
+    let actionId: Int
+    /// `-1` 表示一级分类。
+    let parent: Int
+}
+
+struct UpdateTypeRequest: Encodable, Sendable {
+    let tname: String
+    let actionId: Int?
+    let parent: Int?
+}
+
+enum TypeEditorMode: Equatable {
+    case create
+    case edit(TypeNodeDTO)
+}
+
+struct TypeEditorState: Identifiable, Equatable {
+    let id = UUID()
+    var mode: TypeEditorMode
+    var name: String
+    /// 新建时可选挂到某个一级分类下；`nil` 表示一级分类。
+    var parentId: Int?
+
+    init(mode: TypeEditorMode, parentId: Int? = nil) {
+        self.mode = mode
+        switch mode {
+        case .create:
+            self.name = ""
+            self.parentId = parentId
+        case .edit(let node):
+            self.name = node.tName
+            self.parentId = node.isRootLevel ? nil : node.parent
+        }
+    }
+
+    var title: String {
+        switch mode {
+        case .create: return "新建分类"
+        case .edit: return "编辑分类"
+        }
+    }
+}
+
+/// 列表展示用的扁平节点（便于每行右划/左划）。
+struct FlatTypeRow: Identifiable, Equatable {
+    let id: Int
+    let node: TypeNodeDTO
+    let depth: Int
 }
