@@ -315,13 +315,21 @@ struct ManagementBackButton: View {
 
 extension ToolbarContent {
     /// 隐藏 iOS 26+ 工具栏 Liquid Glass 共享背景，避免与自定义圆形按钮叠成「甜甜圈」。
+    ///
+    /// `sharedBackgroundVisibility` 属于 iOS 26 SDK：`#available` 只做运行时分支，
+    /// 旧版 Xcode（如 15.x / iOS 17 SDK）在编译期就解析不到该符号。
+    /// 因此用编译期分支：有新 SDK 时才调用，否则 no-op。
     @ToolbarContentBuilder
     func eaHideSharedBackground() -> some ToolbarContent {
+        #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             sharedBackgroundVisibility(.hidden)
         } else {
             self
         }
+        #else
+        self
+        #endif
     }
 }
 

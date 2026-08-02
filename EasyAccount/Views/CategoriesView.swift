@@ -95,15 +95,9 @@ final class CategoriesViewModel: ObservableObject {
         }
     }
 
-    func selectAction(_ actionId: Int) async {
-        guard selectedActionId != actionId else { return }
-        selectedActionId = actionId
-        await loadTypes(actionId: actionId, force: false)
-    }
-
     func openCreate() {
         guard selectedActionId != nil else {
-            onToast("请先选择收支类型")
+            onToast("分类数据尚未就绪，请稍后重试")
             return
         }
         editor = TypeEditorState(mode: .create)
@@ -116,7 +110,7 @@ final class CategoriesViewModel: ObservableObject {
     func saveEditor() async {
         guard let editor else { return }
         guard let actionId = selectedActionId else {
-            onToast("请先选择收支类型")
+            onToast("分类数据尚未就绪，请稍后重试")
             return
         }
         let name = editor.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -249,13 +243,7 @@ struct CategoriesView: View {
                 } else if !vm.errorMessage.isEmpty && vm.actions.isEmpty {
                     errorState
                 } else {
-                    VStack(spacing: 0) {
-                        if !vm.actions.isEmpty {
-                            actionPicker
-                            Divider().overlay(EATheme.surfaceElevated)
-                        }
-                        typeTree
-                    }
+                    typeTree
                 }
             }
             .background(EATheme.background.ignoresSafeArea())
@@ -276,7 +264,6 @@ struct CategoriesView: View {
                 .eaHideSharedBackground()
             }
             .task { await vm.loadActions() }
-            .refreshable { await vm.loadActions(force: true) }
             .sheet(item: $vm.editor) { editor in
                 TypeEditorSheet(
                     editor: Binding(
@@ -292,36 +279,6 @@ struct CategoriesView: View {
         }
     }
 
-    private var actionPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(vm.actions) { action in
-                    let selected = vm.selectedActionId == action.id
-                    Button {
-                        Task { await vm.selectAction(action.id) }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(action.hName)
-                                .font(.system(size: 14, weight: .semibold))
-                            Text(action.handleLabel)
-                                .font(.system(size: 11))
-                                .opacity(0.8)
-                        }
-                        .foregroundStyle(selected ? Color.white : EATheme.label)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(selected ? EATheme.blue : EATheme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(PressableButtonStyle())
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
     @ViewBuilder
     private var typeTree: some View {
         if vm.loadingTypes && vm.types.isEmpty {
@@ -331,7 +288,7 @@ struct CategoriesView: View {
                 Text("暂无分类")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(EATheme.label)
-                Text("当前收支类型下还没有分类数据")
+                Text("还没有分类数据")
                     .font(.system(size: 13))
                     .foregroundStyle(EATheme.secondary)
                 Button("新建分类") { vm.openCreate() }
@@ -374,8 +331,7 @@ struct CategoriesView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .contentMargins(.top, 0, for: .scrollContent)
-            .listSectionSpacing(8)
+            .refreshable { await vm.loadActions(force: true) }
         }
     }
 

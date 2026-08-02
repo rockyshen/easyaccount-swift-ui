@@ -11,9 +11,13 @@ struct ChatView: View {
     @State private var willCancelHold = false
     /// 本次按压手势是否已处理过按下，避免 onChanged 逐帧重复触发。
     @State private var holdGestureBegan = false
+    /// 延迟启动录音的任务；点按会在最短按住时长前松开并取消，不会开录。
+    @State private var holdArmTask: Task<Void, Never>?
     /// 复用同一个发生器并预热，否则临时创建的发生器首次震动会延迟或丢失。
     @State private var holdImpact = UIImpactFeedbackGenerator(style: .medium)
     private let holdCancelDistance: CGFloat = 56
+    /// 必须持续按住超过此时长才开录，避免点按误触发。
+    private let holdMinimumDuration: Duration = .milliseconds(200)
 
     private let suggestions = [
         "今天午饭花了 35 元",
@@ -182,6 +186,7 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(spacing: 10) {
+            // 仅手指按住时展示录制 UI；松手后续录在后台进行。
             if voiceMode, isHoldPressing {
                 voiceRecordingHint
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -200,7 +205,9 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.16), value: isHoldPressing)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
-            if speech.isListening {
+            holdArmTask?.cancel()
+            holdArmTask = nil
+            if speech.isListening || speech.isFinalizing {
                 speech.cancel()
             }
             isHoldPressing = false
@@ -293,7 +300,7 @@ struct ChatView: View {
             }
             .opacity(isHoldPressing ? 0 : 1)
             .allowsHitTesting(!isHoldPressing)
-            .disabled(speech.isListening)
+            .disabled(isHoldPressing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -341,7 +348,13 @@ struct ChatView: View {
             .onChanged { value in
                 if !holdGestureBegan {
                     holdGestureBegan = true
-                    beginHoldToTalk()
+                    // 按下只武装，不立刻开录；持续按住超过阈值后才 begin。
+                    holdArmTask?.cancel()
+                    holdArmTask = Task {
+                        try? await Task.sleep(for: holdMinimumDuration)
+                        guard !Task.isCancelled else { return }
+                        beginHoldToTalk()
+                    }
                 }
                 guard isHoldPressing else { return }
                 let canceling = value.translation.height < -holdCancelDistance
@@ -352,7 +365,11 @@ struct ChatView: View {
                 }
             }
             .onEnded { _ in
+                holdArmTask?.cancel()
+                holdArmTask = nil
                 holdGestureBegan = false
+                // 未达到最短按住时长就松开：视为点按，不开录也不结束。
+                guard isHoldPressing else { return }
                 endHoldToTalk()
             }
     }
@@ -375,7 +392,9 @@ struct ChatView: View {
     }
 
     private func exitVoiceMode() {
-        if speech.isListening {
+        holdArmTask?.cancel()
+        holdArmTask = nil
+        if speech.isListening || speech.isFinalizing {
             speech.cancel()
         }
         isHoldPressing = false
@@ -395,6 +414,7 @@ struct ChatView: View {
         holdImpact.impactOccurred()
         holdImpact.prepare()
         do {
+            // start() 内部会 cancel 上一轮后台续录，避免两路识别打架。
             try speech.start()
         } catch {
             isHoldPressing = false
@@ -406,6 +426,7 @@ struct ChatView: View {
     private func endHoldToTalk() {
         guard isHoldPressing else { return }
         let cancel = willCancelHold
+        // 先收起录制 UI，续录只在后台进行。
         isHoldPressing = false
         willCancelHold = false
 
@@ -416,18 +437,21 @@ struct ChatView: View {
             return
         }
 
-        let spoken = speech.stop()
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-
-        let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            vm.showToast("没有识别到内容，请再试一次")
-            return
+        // 松手后续录约 1.2s 并等待最终结果，减少句尾丢字；界面已恢复「按住说话」。
+        Task {
+            let spoken = await speech.finish(tailSeconds: 1.2)
+            // 若期间又按住开了新一轮，finish 会被 cancel，不再弹失败提示。
+            guard !speech.isListening, !isHoldPressing else { return }
+            let text = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                vm.showToast("没有识别到内容，请再试一次")
+                return
+            }
+            // 松开发送：直接发出，保持语音模式便于连续说下一条。
+            vm.inputText = text
+            vm.sendChat()
         }
-
-        // 松开发送：直接发出，保持语音模式便于连续说下一条。
-        vm.inputText = text
-        vm.sendChat()
     }
 
     private var dismissKeyboardDrag: some Gesture {
