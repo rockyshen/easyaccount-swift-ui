@@ -7,7 +7,7 @@ import Speech
 final class SpeechInputController: ObservableObject {
     @Published private(set) var partialText = ""
     @Published private(set) var isListening = false
-    /// 松手后的续录 / 等待最终结果阶段（UI 可显示「正在识别…」）。
+    /// 松手后的续录 / 等待最终结果阶段（后台进行，不驱动录制 UI）。
     @Published private(set) var isFinalizing = false
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
