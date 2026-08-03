@@ -77,9 +77,18 @@ struct DashboardView: View {
     private func content(_ dashboard: DashboardDTO) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                summaryCard(dashboard)
-                yearCard(dashboard)
-                accountsSection(dashboard.accounts ?? [])
+                periodSummaryCard(
+                    title: "本月",
+                    income: dashboard.curIncome,
+                    outcome: dashboard.curOutCome,
+                    balance: dashboard.curBalance
+                )
+                periodSummaryCard(
+                    title: "本年度",
+                    income: dashboard.yearIncome,
+                    outcome: dashboard.yearOutCome,
+                    balance: dashboard.yearBalance
+                )
             }
             .padding(16)
             .frame(maxWidth: 720)
@@ -87,69 +96,27 @@ struct DashboardView: View {
         }
     }
 
-    private func summaryCard(_ dashboard: DashboardDTO) -> some View {
+    /// 本月 / 本年度共用：收入绿 / 支出橙 / 结余蓝三列指标卡。
+    private func periodSummaryCard(
+        title: String,
+        income: String?,
+        outcome: String?,
+        balance: String?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("资产概况")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(EATheme.secondary)
-            HStack(spacing: 12) {
-                metricBlock(title: "总资产", value: dashboard.totalAsset)
-                metricBlock(title: "净资产", value: dashboard.netAsset)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(EATheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func yearCard(_ dashboard: DashboardDTO) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("本年度")
+            Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(EATheme.secondary)
             HStack(spacing: 10) {
-                metricBlock(title: "收入", value: dashboard.yearIncome, accent: EATheme.green)
-                metricBlock(title: "支出", value: dashboard.yearOutCome, accent: EATheme.orange)
-                metricBlock(title: "结余", value: dashboard.yearBalance, accent: EATheme.blue)
+                metricBlock(title: "收入", value: income, accent: EATheme.green)
+                metricBlock(title: "支出", value: outcome, accent: EATheme.orange)
+                metricBlock(title: "结余", value: balance, accent: EATheme.blue)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(EATheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func accountsSection(_ accounts: [DashboardAccountDTO]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("账户构成")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(EATheme.secondary)
-                .padding(.horizontal, 4)
-
-            if accounts.isEmpty {
-                Text("暂无账户数据")
-                    .font(.system(size: 14))
-                    .foregroundStyle(EATheme.secondary)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(EATheme.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
-                        DashboardAccountRow(account: account)
-                        if index < accounts.count - 1 {
-                            Divider().overlay(EATheme.surfaceElevated)
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(EATheme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-        }
     }
 
     private func metricBlock(title: String, value: String?, accent: Color = EATheme.label) -> some View {
@@ -182,62 +149,5 @@ struct DashboardView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private struct DashboardAccountRow: View {
-    let account: DashboardAccountDTO
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(account.accountName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(EATheme.label)
-                Spacer()
-                Text("¥\(MoneyFormat.display(account.accountAsset))")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(EATheme.label)
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(EATheme.surfaceElevated)
-                    Capsule()
-                        .fill(EATheme.blue.opacity(0.85))
-                        .frame(width: geo.size.width * MoneyFormat.percentFraction(from: account.percent))
-                }
-            }
-            .frame(height: 6)
-
-            HStack {
-                if let exempt = account.exemptAsset, MoneyFormat.decimal(from: exempt) > 0 {
-                    Text(exemptLabel(exempt))
-                        .font(.system(size: 12))
-                        .foregroundStyle(EATheme.secondary)
-                }
-                Spacer()
-                Text(percentLabel)
-                    .font(.system(size: 12))
-                    .foregroundStyle(EATheme.tertiary)
-            }
-        }
-        .padding(.vertical, 10)
-    }
-
-    private func exemptLabel(_ value: String) -> String {
-        if account.accountName.contains("信用卡") {
-            return "已用 ¥\(MoneyFormat.display(value))"
-        }
-        return "豁免 ¥\(MoneyFormat.display(value))"
-    }
-
-    private var percentLabel: String {
-        guard let percent = account.percent?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !percent.isEmpty else {
-            return ""
-        }
-        return percent.hasSuffix("%") ? percent : "\(percent)%"
     }
 }

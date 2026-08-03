@@ -11,13 +11,13 @@ struct ChatView: View {
     @State private var willCancelHold = false
     /// 本次按压手势是否已处理过按下，避免 onChanged 逐帧重复触发。
     @State private var holdGestureBegan = false
-    /// 延迟启动录音的任务；点按会在最短按住时长前松开并取消，不会开录。
-    @State private var holdArmTask: Task<Void, Never>?
+    /// 本次按下开始时间；用于区分点按（立刻取消）与有效按住。
+    @State private var holdPressStartedAt: Date?
     /// 复用同一个发生器并预热，否则临时创建的发生器首次震动会延迟或丢失。
     @State private var holdImpact = UIImpactFeedbackGenerator(style: .medium)
     private let holdCancelDistance: CGFloat = 56
-    /// 必须持续按住超过此时长才开录，避免点按误触发。
-    private let holdMinimumDuration: Duration = .milliseconds(200)
+    /// 按住短于此阈值视为点按：按下即录，松手立刻取消且不发送。
+    private let holdTapMaxDuration: TimeInterval = 0.2
 
     private let suggestions = [
         "今天午饭花了 35 元",
@@ -209,14 +209,13 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.16), value: isVoiceCaptureActive)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
-            holdArmTask?.cancel()
-            holdArmTask = nil
             if speech.isListening || speech.isFinalizing {
                 speech.cancel()
             }
             isHoldPressing = false
             willCancelHold = false
             holdGestureBegan = false
+            holdPressStartedAt = nil
         }
     }
 
@@ -352,13 +351,8 @@ struct ChatView: View {
             .onChanged { value in
                 if !holdGestureBegan {
                     holdGestureBegan = true
-                    // 按下只武装，不立刻开录；持续按住超过阈值后才 begin。
-                    holdArmTask?.cancel()
-                    holdArmTask = Task {
-                        try? await Task.sleep(for: holdMinimumDuration)
-                        guard !Task.isCancelled else { return }
-                        beginHoldToTalk()
-                    }
+                    // 按下即录；若很快松开，end 里按点按逻辑取消。
+                    beginHoldToTalk()
                 }
                 guard isHoldPressing else { return }
                 let canceling = value.translation.height < -holdCancelDistance
@@ -369,10 +363,7 @@ struct ChatView: View {
                 }
             }
             .onEnded { _ in
-                holdArmTask?.cancel()
-                holdArmTask = nil
                 holdGestureBegan = false
-                // 未达到最短按住时长就松开：视为点按，不开录也不结束。
                 guard isHoldPressing else { return }
                 endHoldToTalk()
             }
@@ -396,14 +387,13 @@ struct ChatView: View {
     }
 
     private func exitVoiceMode() {
-        holdArmTask?.cancel()
-        holdArmTask = nil
         if speech.isListening || speech.isFinalizing {
             speech.cancel()
         }
         isHoldPressing = false
         willCancelHold = false
         holdGestureBegan = false
+        holdPressStartedAt = nil
         withAnimation(.easeInOut(duration: 0.15)) {
             voiceMode = false
         }
@@ -414,6 +404,7 @@ struct ChatView: View {
         guard !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
+        holdPressStartedAt = Date()
         // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
         holdImpact.impactOccurred()
         holdImpact.prepare()
@@ -423,21 +414,28 @@ struct ChatView: View {
         } catch {
             isHoldPressing = false
             willCancelHold = false
+            holdPressStartedAt = nil
             vm.showToast((error as? LocalizedError)?.errorDescription ?? "无法开始语音识别")
         }
     }
 
     private func endHoldToTalk() {
         guard isHoldPressing else { return }
-        let cancel = willCancelHold
-        // 先收起录制 UI，续录只在后台进行。
+        let cancelBySwipe = willCancelHold
+        let pressDuration = holdPressStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let cancelByTap = pressDuration < holdTapMaxDuration
+        // 先收起录制 UI；点按/上滑取消不进入后台续录。
         isHoldPressing = false
         willCancelHold = false
+        holdPressStartedAt = nil
 
-        if cancel {
+        if cancelBySwipe || cancelByTap {
             speech.cancel()
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            vm.showToast("已取消")
+            if cancelBySwipe {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                vm.showToast("已取消")
+            }
+            // 点按：静默取消，不弹 toast。
             return
         }
 
