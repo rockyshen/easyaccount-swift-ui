@@ -16,6 +16,8 @@ final class SpeechInputController: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var receivedFinal = false
     private var sessionGeneration = 0
+    /// `removeTap` 在未 install 时会直接抛 ObjC 异常导致闪退，必须自行跟踪。
+    private var isTapInstalled = false
 
     /// 松手后继续录入的时长，避免吞掉句尾几个字。
     private let defaultTailSeconds: TimeInterval = 1.2
@@ -44,6 +46,7 @@ final class SpeechInputController: ObservableObject {
     }
 
     func start() throws {
+        // 先安全停掉上一轮，再开新会话。
         cancel()
         partialText = ""
         receivedFinal = false
@@ -57,7 +60,11 @@ final class SpeechInputController: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         // 用 playAndRecord 而非 record：record 会独占音频硬件并屏蔽 Taptic，
         // 导致按住说话期间（如上滑取消）的震动反馈无法播放。
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth, .defaultToSpeaker])
+        try session.setCategory(
+            .playAndRecord,
+            mode: .measurement,
+            options: [.duckOthers, .allowBluetooth, .defaultToSpeaker]
+        )
         try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
 
@@ -71,18 +78,26 @@ final class SpeechInputController: ObservableObject {
         recognitionRequest = request
 
         let inputNode = audioEngine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-        guard format.sampleRate > 0 else {
+        // 会话激活后再取格式；优先 inputFormat，避免 sampleRate=0 导致 installTap 崩溃。
+        let format = resolvedInputFormat(for: inputNode)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            tearDownSession(cancelTask: true)
             throw SpeechInputError.audioEngineFailed
         }
 
-        inputNode.removeTap(onBus: 0)
+        removeTapIfNeeded()
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             request.append(buffer)
         }
+        isTapInstalled = true
 
         audioEngine.prepare()
-        try audioEngine.start()
+        do {
+            try audioEngine.start()
+        } catch {
+            tearDownSession(cancelTask: true)
+            throw SpeechInputError.audioEngineFailed
+        }
         isListening = true
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -140,7 +155,7 @@ final class SpeechInputController: ObservableObject {
         return text
     }
 
-    /// 立即停止并丢弃结果（上滑取消）。
+    /// 立即停止并丢弃结果（上滑取消 / 点按无效）。
     func cancel() {
         sessionGeneration += 1
         tearDownSession(cancelTask: true)
@@ -163,11 +178,25 @@ final class SpeechInputController: ObservableObject {
         if audioEngine.isRunning {
             audioEngine.stop()
         }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        removeTapIfNeeded()
         if cancelTask {
             recognitionTask?.cancel()
             recognitionTask = nil
         }
+    }
+
+    private func removeTapIfNeeded() {
+        guard isTapInstalled else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        isTapInstalled = false
+    }
+
+    private func resolvedInputFormat(for inputNode: AVAudioInputNode) -> AVAudioFormat {
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        if inputFormat.sampleRate > 0, inputFormat.channelCount > 0 {
+            return inputFormat
+        }
+        return inputNode.outputFormat(forBus: 0)
     }
 }
 
