@@ -184,10 +184,14 @@ struct ChatView: View {
         }
     }
 
+    /// 仅手指按住时展示录制 UI；松手后的续录/出最终结果在后台进行。
+    private var isVoiceCaptureActive: Bool {
+        isHoldPressing
+    }
+
     private var composer: some View {
         VStack(spacing: 10) {
-            // 仅手指按住时展示录制 UI；松手后续录在后台进行。
-            if voiceMode, isHoldPressing {
+            if voiceMode, isVoiceCaptureActive {
                 voiceRecordingHint
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -199,10 +203,10 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, isHoldPressing ? 8 : 10)
+        .padding(.top, isVoiceCaptureActive ? 8 : 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
-        .animation(.easeOut(duration: 0.16), value: isHoldPressing)
+        .animation(.easeOut(duration: 0.16), value: isVoiceCaptureActive)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
             if speech.isListening || speech.isFinalizing {
@@ -282,8 +286,8 @@ struct ChatView: View {
             composerCircleButton(systemName: "plus") {
                 vm.showToast("附件功能即将开放")
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
 
             Text("按住说话")
                 .font(.system(size: 16, weight: .semibold))
@@ -297,8 +301,8 @@ struct ChatView: View {
             composerCircleButton(systemName: "keyboard") {
                 exitVoiceMode()
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
             .disabled(isHoldPressing)
         }
         .padding(.horizontal, 8)
@@ -306,8 +310,8 @@ struct ChatView: View {
         .background(holdBarBackground)
         .clipShape(Capsule())
         .shadow(
-            color: Color.black.opacity(isHoldPressing ? 0.08 : 0.06),
-            radius: isHoldPressing ? 10 : 8,
+            color: Color.black.opacity(isVoiceCaptureActive ? 0.08 : 0.06),
+            radius: isVoiceCaptureActive ? 10 : 8,
             y: 3
         )
     }
