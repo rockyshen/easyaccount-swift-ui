@@ -3,6 +3,7 @@ import UIKit
 
 struct ChatView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
+    @EnvironmentObject private var scrollBridge: ChatScrollBridge
     @FocusState private var inputFocused: Bool
     @StateObject private var speech = SpeechInputController()
     @State private var voiceMode = false
@@ -59,6 +60,8 @@ struct ChatView: View {
                 if !vm.showSideMenu {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 }
+                // 顶栏浮在列表之上，点它不会打断惯性；不手动按住的话侧栏滑出时列表还在自己滚。
+                scrollBridge.stopScrolling()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     vm.showSideMenu = true
                 }
@@ -131,15 +134,10 @@ struct ChatView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.top, chatHeaderContentHeight)
+            .background(ChatScrollViewProbe(bridge: scrollBridge))
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.always)
-        .background {
-            ChatScrollActivityReader { vm.isChatListScrolling = $0 }
-        }
-        .onDisappear {
-            vm.isChatListScrolling = false
-        }
     }
 
     private var messageList: some View {
@@ -164,20 +162,15 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
+                .background(ChatScrollViewProbe(bridge: scrollBridge))
             }
             .scrollDismissesKeyboard(.interactively)
             // 即使内容不足一屏也允许回弹，短对话可轻微上划。
             .scrollBounceBehavior(.always)
             // 重新打开时默认停在最新消息，而不是历史顶部。
             .defaultScrollAnchor(.bottom)
-            .background {
-                ChatScrollActivityReader { vm.isChatListScrolling = $0 }
-            }
             .onAppear {
                 scrollChatToBottom(proxy: proxy, animated: false)
-            }
-            .onDisappear {
-                vm.isChatListScrolling = false
             }
             .onChange(of: vm.messages) { _, _ in
                 scrollChatToBottom(proxy: proxy, animated: true)
@@ -539,174 +532,6 @@ struct ChatView: View {
         UIPasteboard.general.string = text
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         vm.showToast("已复制")
-    }
-}
-
-/// 读取底层 `UIScrollView` 是否处于「列表滚动中」，供根视图禁用右划开侧栏。
-///
-/// 注意：不能直接用 `isDragging`。右划开栏与列表共用同一指触摸时，
-/// `isDragging` 也会变成 true，会把自己的开栏手势误判为「正在滚动」而永久拦死。
-private struct ChatScrollActivityReader: UIViewRepresentable {
-    var onChange: (Bool) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onChange: onChange)
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onChange = onChange
-        context.coordinator.attachIfNeeded(from: uiView)
-    }
-
-    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.detach(reportIdle: true)
-    }
-
-    final class Coordinator {
-        var onChange: (Bool) -> Void
-        private weak var scrollView: UIScrollView?
-        private var observations: [NSKeyValueObservation] = []
-        private var lastReported = false
-        private var lastContentOffsetY: CGFloat?
-        private var settleWorkItem: DispatchWorkItem?
-
-        init(onChange: @escaping (Bool) -> Void) {
-            self.onChange = onChange
-        }
-
-        deinit {
-            settleWorkItem?.cancel()
-            observations.removeAll()
-        }
-
-        func attachIfNeeded(from view: UIView) {
-            if scrollView != nil { return }
-            DispatchQueue.main.async { [weak self, weak view] in
-                guard let self, let view else { return }
-                if self.scrollView != nil { return }
-                guard let found = Self.findScrollView(near: view) else { return }
-                self.bind(found)
-            }
-        }
-
-        func detach(reportIdle: Bool) {
-            settleWorkItem?.cancel()
-            settleWorkItem = nil
-            observations.removeAll()
-            scrollView = nil
-            lastContentOffsetY = nil
-            if reportIdle {
-                report(false)
-            }
-        }
-
-        private func bind(_ scrollView: UIScrollView) {
-            observations.removeAll()
-            self.scrollView = scrollView
-            lastContentOffsetY = scrollView.contentOffset.y
-            observations = [
-                scrollView.observe(\.isDecelerating, options: [.initial, .new]) { [weak self] _, _ in
-                    self?.publish()
-                },
-                scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
-                    self?.publish()
-                },
-                scrollView.observe(\.isDragging, options: [.new]) { [weak self] _, _ in
-                    self?.publish()
-                }
-            ]
-            publish()
-        }
-
-        private func publish() {
-            guard let scrollView else {
-                report(false)
-                return
-            }
-
-            // 惯性未停：一律视为滚动中。
-            if scrollView.isDecelerating {
-                markScrolling()
-                return
-            }
-
-            let y = scrollView.contentOffset.y
-            let previousY = lastContentOffsetY ?? y
-            lastContentOffsetY = y
-            let verticalDelta = abs(y - previousY)
-
-            // 只有内容在纵向真正移动时才算「列表滚动」。
-            // 纯右划开栏时 isDragging 也可能为 true，但 contentOffset.y 基本不变。
-            if scrollView.isDragging, verticalDelta > 0.5 {
-                markScrolling()
-                return
-            }
-
-            scheduleIdleIfNeeded()
-        }
-
-        private func markScrolling() {
-            settleWorkItem?.cancel()
-            settleWorkItem = nil
-            report(true)
-        }
-
-        private func scheduleIdleIfNeeded() {
-            guard lastReported else { return }
-            settleWorkItem?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                // 冷却结束前若又进入惯性，保持拦截。
-                if self.scrollView?.isDecelerating == true { return }
-                self.report(false)
-            }
-            settleWorkItem = work
-            // 短暂冷却，避免惯性刚停的同一划又把侧栏带出来。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
-        }
-
-        private func report(_ active: Bool) {
-            guard active != lastReported else { return }
-            lastReported = active
-            onChange(active)
-        }
-
-        private static func findScrollView(near view: UIView) -> UIScrollView? {
-            var current: UIView? = view
-            while let node = current {
-                if let scrollView = node as? UIScrollView {
-                    return scrollView
-                }
-                if let parent = node.superview {
-                    for sibling in parent.subviews {
-                        if let scrollView = findDescendantScrollView(in: sibling) {
-                            return scrollView
-                        }
-                    }
-                }
-                current = node.superview
-            }
-            return nil
-        }
-
-        private static func findDescendantScrollView(in view: UIView) -> UIScrollView? {
-            if let scrollView = view as? UIScrollView {
-                return scrollView
-            }
-            for child in view.subviews {
-                if let found = findDescendantScrollView(in: child) {
-                    return found
-                }
-            }
-            return nil
-        }
     }
 }
 
