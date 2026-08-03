@@ -167,6 +167,20 @@ struct ChatView: View {
             .onChange(of: vm.messages) { _, _ in
                 scrollChatToBottom(proxy: proxy, animated: true)
             }
+            // 语音 ↔ 文字切换会改底部 inset；键盘弹出时 LazyVStack 偶发把位置重置到顶部。
+            .onChange(of: voiceMode) { _, _ in
+                pinChatToLatestAfterLayoutChange(proxy: proxy)
+            }
+            .onChange(of: inputFocused) { _, focused in
+                guard focused else { return }
+                pinChatToLatestAfterLayoutChange(proxy: proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                scrollChatToBottom(proxy: proxy, animated: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                scrollChatToBottom(proxy: proxy, animated: false)
+            }
         }
     }
 
@@ -181,6 +195,17 @@ struct ChatView: View {
             } else {
                 proxy.scrollTo(lastId, anchor: .bottom)
             }
+        }
+    }
+
+    /// 底部栏/键盘动画过程中多钉几次，避免停在历史顶部。
+    private func pinChatToLatestAfterLayoutChange(proxy: ScrollViewProxy) {
+        scrollChatToBottom(proxy: proxy, animated: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            scrollChatToBottom(proxy: proxy, animated: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            scrollChatToBottom(proxy: proxy, animated: false)
         }
     }
 
