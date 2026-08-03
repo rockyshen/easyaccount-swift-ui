@@ -11,12 +11,14 @@ struct ChatView: View {
     @State private var willCancelHold = false
     /// 本次按压手势是否已处理过按下，避免 onChanged 逐帧重复触发。
     @State private var holdGestureBegan = false
-    /// 本次按下开始时间；用于区分点按（立刻取消）与有效按住。
+    /// 本次按下开始时间；用于区分点按与有效按住。
     @State private var holdPressStartedAt: Date?
+    /// 超过点按阈值后再真正开始录音的延迟任务。
+    @State private var holdStartTask: Task<Void, Never>?
     /// 复用同一个发生器并预热，否则临时创建的发生器首次震动会延迟或丢失。
     @State private var holdImpact = UIImpactFeedbackGenerator(style: .medium)
     private let holdCancelDistance: CGFloat = 56
-    /// 按住短于此阈值视为点按：按下即录，松手立刻取消且不发送。
+    /// 按住短于此阈值视为点按：不启动录音、不发送、不弹 toast。
     private let holdTapMaxDuration: TimeInterval = 0.2
 
     private let suggestions = [
@@ -205,6 +207,8 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.16), value: isHoldPressing)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
+            holdStartTask?.cancel()
+            holdStartTask = nil
             if speech.isListening || speech.isFinalizing {
                 speech.cancel()
             }
@@ -347,8 +351,15 @@ struct ChatView: View {
             .onChanged { value in
                 if !holdGestureBegan {
                     holdGestureBegan = true
-                    // 按下即录；若很快松开，end 里按点按逻辑取消。
-                    beginHoldToTalk()
+                    holdPressStartedAt = Date()
+                    // 不立刻录音：超过点按阈值后才 start，避免误触与无效引擎启停。
+                    holdStartTask?.cancel()
+                    holdStartTask = Task { @MainActor in
+                        let ns = UInt64(holdTapMaxDuration * 1_000_000_000)
+                        try? await Task.sleep(nanoseconds: ns)
+                        guard !Task.isCancelled, holdGestureBegan, !isHoldPressing else { return }
+                        beginHoldToTalk()
+                    }
                 }
                 guard isHoldPressing else { return }
                 let canceling = value.translation.height < -holdCancelDistance
@@ -359,9 +370,15 @@ struct ChatView: View {
                 }
             }
             .onEnded { _ in
+                holdStartTask?.cancel()
+                holdStartTask = nil
                 holdGestureBegan = false
-                guard isHoldPressing else { return }
-                endHoldToTalk()
+                if isHoldPressing {
+                    endHoldToTalk()
+                } else {
+                    // 点按：从未进入录音，静默忽略。
+                    holdPressStartedAt = nil
+                }
             }
     }
 
@@ -383,6 +400,8 @@ struct ChatView: View {
     }
 
     private func exitVoiceMode() {
+        holdStartTask?.cancel()
+        holdStartTask = nil
         if speech.isListening || speech.isFinalizing {
             speech.cancel()
         }
@@ -400,7 +419,9 @@ struct ChatView: View {
         guard !isHoldPressing else { return }
         isHoldPressing = true
         willCancelHold = false
-        holdPressStartedAt = Date()
+        if holdPressStartedAt == nil {
+            holdPressStartedAt = Date()
+        }
         // 先给震动反馈再启动录音，并立刻重新预热以备上滑取消时使用。
         holdImpact.impactOccurred()
         holdImpact.prepare()
@@ -418,20 +439,15 @@ struct ChatView: View {
     private func endHoldToTalk() {
         guard isHoldPressing else { return }
         let cancelBySwipe = willCancelHold
-        let pressDuration = holdPressStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let cancelByTap = pressDuration < holdTapMaxDuration
-        // 先收起录制 UI；点按/上滑取消不进入后台续录。
+        // 先收起录制 UI；上滑取消不进入后台续录。
         isHoldPressing = false
         willCancelHold = false
         holdPressStartedAt = nil
 
-        if cancelBySwipe || cancelByTap {
+        if cancelBySwipe {
             speech.cancel()
-            if cancelBySwipe {
-                UINotificationFeedbackGenerator().notificationOccurred(.warning)
-                vm.showToast("已取消")
-            }
-            // 点按：静默取消，不弹 toast。
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            vm.showToast("已取消")
             return
         }
 
