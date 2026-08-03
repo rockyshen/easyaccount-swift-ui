@@ -11,12 +11,12 @@ struct ChatView: View {
     @State private var willCancelHold = false
     /// 本次按压手势是否已处理过按下，避免 onChanged 逐帧重复触发。
     @State private var holdGestureBegan = false
-    /// 本次按下开始时间；用于区分点按（立刻取消）与有效按住。
+    /// 本次按下开始时间；用于区分点按（松手立刻取消）与有效按住。
     @State private var holdPressStartedAt: Date?
     /// 复用同一个发生器并预热，否则临时创建的发生器首次震动会延迟或丢失。
     @State private var holdImpact = UIImpactFeedbackGenerator(style: .medium)
     private let holdCancelDistance: CGFloat = 56
-    /// 按住短于此阈值视为点按：按下即录，松手立刻取消且不发送。
+    /// 按住短于此阈值视为点按：按下已即时开录，松手静默取消且不发送。
     private let holdTapMaxDuration: TimeInterval = 0.2
 
     private let suggestions = [
@@ -326,9 +326,22 @@ struct ChatView: View {
             VoiceSoundWaveView(isActive: isHoldPressing, isCanceling: willCancelHold)
                 .frame(height: 40)
 
-            Text(willCancelHold ? "松开取消" : "松开发送，上滑取消")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(willCancelHold ? EATheme.danger : EATheme.secondary)
+            // 与 Cursor iOS 一致：按住时展示实时转写，而不是空等松手。
+            Group {
+                if willCancelHold {
+                    Text("松开取消")
+                } else if speech.partialText.isEmpty {
+                    Text("松开发送，上滑取消")
+                } else {
+                    Text(speech.partialText)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(willCancelHold ? EATheme.danger : EATheme.secondary)
+            .frame(maxWidth: .infinity)
+            .animation(.easeOut(duration: 0.12), value: speech.partialText)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
@@ -351,7 +364,7 @@ struct ChatView: View {
             .onChanged { value in
                 if !holdGestureBegan {
                     holdGestureBegan = true
-                    // 按下即录；若很快松开，end 里按点按逻辑取消。
+                    // Cursor 式：按下立刻开录 + 实时转写，不做启动延迟。
                     beginHoldToTalk()
                 }
                 guard isHoldPressing else { return }
@@ -435,7 +448,7 @@ struct ChatView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 vm.showToast("已取消")
             }
-            // 点按：静默取消，不弹 toast。
+            // 点按：静默取消，不弹 toast（与 Cursor 误触忽略一致）。
             return
         }
 
