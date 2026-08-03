@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct EasyAccountRootView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
@@ -10,6 +11,8 @@ struct EasyAccountRootView: View {
     @State private var menuDragTranslation: CGFloat = 0
     @State private var menuWidthCache: CGFloat = 280
     @State private var isMenuDragging = false
+    /// 复用并预热，侧栏打开震动更跟手。
+    @State private var menuOpenImpact = UIImpactFeedbackGenerator(style: .medium)
 
     /// 管理子页右划返回时的水平位移。
     @State private var managementDragOffset: CGFloat = 0
@@ -138,6 +141,7 @@ struct EasyAccountRootView: View {
     }
 
     /// 聊天主界面右划打开侧栏（需明显水平滑动，避免干扰列表上下滚）。
+    /// 仅在列表停止滚动时可起手；滚动/惯性过程中忽略，避免与纵向滑动抢手势。
     private var menuOpenSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 20, coordinateSpace: .local)
             .onChanged { value in
@@ -145,7 +149,12 @@ struct EasyAccountRootView: View {
                 let dx = value.translation.width
                 let dy = value.translation.height
                 guard dx > 0, abs(dx) > abs(dy) * 1.15 else { return }
-                if !isMenuDragging { isMenuDragging = true }
+                if !isMenuDragging {
+                    // 已开始拖侧栏后不再受滚动状态打断；仅在起手时拦截。
+                    guard !vm.isChatListScrolling else { return }
+                    isMenuDragging = true
+                    menuOpenImpact.prepare()
+                }
                 menuDragTranslation = dx
             }
             .onEnded { value in
@@ -176,12 +185,17 @@ struct EasyAccountRootView: View {
         let dx = value.translation.width
         let predicted = value.predictedEndTranslation.width
         let threshold = menuWidthCache * 0.28
+        let wasOpen = vm.showSideMenu
         let shouldOpen: Bool
 
-        if vm.showSideMenu {
+        if wasOpen {
             shouldOpen = !(dx < -threshold || predicted < -menuWidthCache * 0.45)
         } else {
             shouldOpen = dx > threshold || predicted > menuWidthCache * 0.45
+        }
+
+        if shouldOpen && !wasOpen {
+            playSideMenuOpenHaptic()
         }
 
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -197,6 +211,11 @@ struct EasyAccountRootView: View {
             menuDragTranslation = 0
             isMenuDragging = false
         }
+    }
+
+    private func playSideMenuOpenHaptic() {
+        menuOpenImpact.impactOccurred()
+        menuOpenImpact.prepare()
     }
 
     /// 管理子页从左缘右划返回（自定义覆盖层，无系统 interactive pop）。

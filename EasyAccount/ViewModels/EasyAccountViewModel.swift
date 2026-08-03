@@ -56,6 +56,8 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var countryCode: String = "+86"
     @Published var toastMessage: String = ""
     @Published var showSideMenu: Bool = false
+    /// 聊天列表正在拖动或惯性滚动；为 true 时禁止右划呼出侧栏。
+    @Published var isChatListScrolling: Bool = false
     @Published var managementDestination: ManagementDestination?
     @Published var appearanceMode: AppearanceMode
 
