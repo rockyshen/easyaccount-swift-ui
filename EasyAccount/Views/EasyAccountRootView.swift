@@ -141,7 +141,7 @@ struct EasyAccountRootView: View {
     }
 
     /// 聊天主界面右划打开侧栏（需明显水平滑动，避免干扰列表上下滚）。
-    /// 仅在列表停止滚动时可起手；滚动/惯性过程中忽略，避免与纵向滑动抢手势。
+    /// 列表纵向滚动/惯性未停时忽略起手；静止后可右划打开。
     private var menuOpenSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 20, coordinateSpace: .local)
             .onChanged { value in
