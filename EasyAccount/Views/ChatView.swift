@@ -56,6 +56,9 @@ struct ChatView: View {
         HStack {
             ManagementCircleIconButton(systemName: "line.3.horizontal", fontSize: 17) {
                 dismissKeyboard()
+                if !vm.showSideMenu {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                }
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     vm.showSideMenu = true
                 }
@@ -131,6 +134,12 @@ struct ChatView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.always)
+        .background {
+            ChatScrollActivityReader { vm.isChatListScrolling = $0 }
+        }
+        .onDisappear {
+            vm.isChatListScrolling = false
+        }
     }
 
     private var messageList: some View {
@@ -161,8 +170,14 @@ struct ChatView: View {
             .scrollBounceBehavior(.always)
             // 重新打开时默认停在最新消息，而不是历史顶部。
             .defaultScrollAnchor(.bottom)
+            .background {
+                ChatScrollActivityReader { vm.isChatListScrolling = $0 }
+            }
             .onAppear {
                 scrollChatToBottom(proxy: proxy, animated: false)
+            }
+            .onDisappear {
+                vm.isChatListScrolling = false
             }
             .onChange(of: vm.messages) { _, _ in
                 scrollChatToBottom(proxy: proxy, animated: true)
@@ -524,6 +539,107 @@ struct ChatView: View {
         UIPasteboard.general.string = text
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         vm.showToast("已复制")
+    }
+}
+
+/// 读取底层 `UIScrollView` 的拖动/惯性状态，供根视图在滚动中禁用右划开侧栏。
+private struct ChatScrollActivityReader: UIViewRepresentable {
+    var onChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChange: onChange)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onChange = onChange
+        context.coordinator.attachIfNeeded(from: uiView)
+    }
+
+    final class Coordinator {
+        var onChange: (Bool) -> Void
+        private weak var scrollView: UIScrollView?
+        private var observations: [NSKeyValueObservation] = []
+        private var lastReported = false
+
+        init(onChange: @escaping (Bool) -> Void) {
+            self.onChange = onChange
+        }
+
+        deinit {
+            observations.removeAll()
+        }
+
+        func attachIfNeeded(from view: UIView) {
+            guard scrollView == nil else { return }
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                guard self.scrollView == nil else { return }
+                guard let found = Self.findScrollView(near: view) else { return }
+                self.bind(found)
+            }
+        }
+
+        private func bind(_ scrollView: UIScrollView) {
+            self.scrollView = scrollView
+            // 不用 isTracking：轻触尚未滚动时也会为 true，会误伤右划开栏。
+            observations = [
+                scrollView.observe(\.isDragging, options: [.initial, .new]) { [weak self] _, _ in
+                    self?.publish()
+                },
+                scrollView.observe(\.isDecelerating, options: [.initial, .new]) { [weak self] _, _ in
+                    self?.publish()
+                },
+                scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                    self?.publish()
+                }
+            ]
+            publish()
+        }
+
+        private func publish() {
+            guard let scrollView else { return }
+            let active = scrollView.isDragging || scrollView.isDecelerating
+            guard active != lastReported else { return }
+            lastReported = active
+            onChange(active)
+        }
+
+        private static func findScrollView(near view: UIView) -> UIScrollView? {
+            var current: UIView? = view
+            while let node = current {
+                if let scrollView = node as? UIScrollView {
+                    return scrollView
+                }
+                if let parent = node.superview {
+                    for sibling in parent.subviews {
+                        if let scrollView = findDescendantScrollView(in: sibling) {
+                            return scrollView
+                        }
+                    }
+                }
+                current = node.superview
+            }
+            return nil
+        }
+
+        private static func findDescendantScrollView(in view: UIView) -> UIScrollView? {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            for child in view.subviews {
+                if let found = findDescendantScrollView(in: child) {
+                    return found
+                }
+            }
+            return nil
+        }
     }
 }
 
