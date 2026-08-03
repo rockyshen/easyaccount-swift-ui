@@ -5,6 +5,8 @@ struct DashboardDTO: Codable, Equatable, Sendable {
     let netAsset: String
     let curIncome: String?
     let curOutCome: String?
+    /// 本月结余；后端补齐前可能缺省，见 docs/dashboard-monthly-balance-handoff.md。
+    let curBalance: String?
     let yearIncome: String?
     let yearOutCome: String?
     let yearBalance: String?
