@@ -4,6 +4,7 @@ import UIKit
 
 struct ChatView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
+    @EnvironmentObject private var scrollBridge: ChatScrollBridge
     @FocusState private var inputFocused: Bool
     @StateObject private var speech = SpeechInputController()
     @State private var voiceMode = false
@@ -126,6 +127,11 @@ struct ChatView: View {
         HStack {
             ManagementCircleIconButton(systemName: "line.3.horizontal", fontSize: 17) {
                 dismissKeyboard()
+                if !vm.showSideMenu {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                }
+                // 顶栏浮在列表之上，点它不会打断惯性；不手动按住的话侧栏滑出时列表还在自己滚。
+                scrollBridge.stopScrolling()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     vm.showSideMenu = true
                 }
@@ -198,6 +204,7 @@ struct ChatView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.top, chatHeaderContentHeight)
+            .background(ChatScrollViewProbe(bridge: scrollBridge))
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.always)
@@ -225,6 +232,7 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
+                .background(ChatScrollViewProbe(bridge: scrollBridge))
             }
             .scrollDismissesKeyboard(.interactively)
             // 即使内容不足一屏也允许回弹，短对话可轻微上划。
@@ -236,6 +244,20 @@ struct ChatView: View {
             }
             .onChange(of: vm.messages) { _, _ in
                 scrollChatToBottom(proxy: proxy, animated: true)
+            }
+            // 语音 ↔ 文字切换会改底部 inset；键盘弹出时 LazyVStack 偶发把位置重置到顶部。
+            .onChange(of: voiceMode) { _, _ in
+                pinChatToLatestAfterLayoutChange(proxy: proxy)
+            }
+            .onChange(of: inputFocused) { _, focused in
+                guard focused else { return }
+                pinChatToLatestAfterLayoutChange(proxy: proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                scrollChatToBottom(proxy: proxy, animated: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                scrollChatToBottom(proxy: proxy, animated: false)
             }
         }
     }
@@ -254,10 +276,25 @@ struct ChatView: View {
         }
     }
 
+    /// 底部栏/键盘动画过程中多钉几次，避免停在历史顶部。
+    private func pinChatToLatestAfterLayoutChange(proxy: ScrollViewProxy) {
+        scrollChatToBottom(proxy: proxy, animated: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            scrollChatToBottom(proxy: proxy, animated: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            scrollChatToBottom(proxy: proxy, animated: false)
+        }
+    }
+
+    /// 仅手指按住时展示录制 UI；松手后的续录/出最终结果在后台进行。
+    private var isVoiceCaptureActive: Bool {
+        isHoldPressing
+    }
+
     private var composer: some View {
         VStack(spacing: 10) {
-            // 仅手指按住时展示录制 UI；松手后续录在后台进行。
-            if voiceMode, isHoldPressing {
+            if voiceMode, isVoiceCaptureActive {
                 voiceRecordingHint
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -269,10 +306,10 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, isHoldPressing ? 8 : 10)
+        .padding(.top, isVoiceCaptureActive ? 8 : 10)
         .padding(.bottom, 10)
         .background(EATheme.background.opacity(0.96))
-        .animation(.easeOut(duration: 0.16), value: isHoldPressing)
+        .animation(.easeOut(duration: 0.16), value: isVoiceCaptureActive)
         .animation(.easeOut(duration: 0.12), value: willCancelHold)
         .onDisappear {
             if speech.isListening || speech.isFinalizing {
@@ -382,8 +419,8 @@ struct ChatView: View {
             composerCircleButton(systemName: "plus") {
                 presentAttachMenu()
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
 
             Text("按住说话")
                 .font(.system(size: 16, weight: .semibold))
@@ -397,8 +434,8 @@ struct ChatView: View {
             composerCircleButton(systemName: "keyboard") {
                 exitVoiceMode()
             }
-            .opacity(isHoldPressing ? 0 : 1)
-            .allowsHitTesting(!isHoldPressing)
+            .opacity(isVoiceCaptureActive ? 0 : 1)
+            .allowsHitTesting(!isVoiceCaptureActive)
             .disabled(isHoldPressing)
         }
         .padding(.horizontal, 8)
@@ -406,8 +443,8 @@ struct ChatView: View {
         .background(holdBarBackground)
         .clipShape(Capsule())
         .shadow(
-            color: Color.black.opacity(isHoldPressing ? 0.08 : 0.06),
-            radius: isHoldPressing ? 10 : 8,
+            color: Color.black.opacity(isVoiceCaptureActive ? 0.08 : 0.06),
+            radius: isVoiceCaptureActive ? 10 : 8,
             y: 3
         )
     }

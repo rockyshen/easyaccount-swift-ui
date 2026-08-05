@@ -178,4 +178,40 @@ struct StreamingBubbleState: Codable, Equatable {
 
 struct ChatOutbound: Encodable {
     let content: String
+    /// 已上传附件 id；无附件时省略字段以兼容旧服务端。
+    let attachmentIds: [String]?
+
+    init(content: String, attachmentIds: [String]? = nil) {
+        self.content = content
+        if let attachmentIds, !attachmentIds.isEmpty {
+            self.attachmentIds = attachmentIds
+        } else {
+            self.attachmentIds = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(content, forKey: .content)
+        if let attachmentIds {
+            try container.encode(attachmentIds, forKey: .attachmentIds)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case content, attachmentIds
+    }
+}
+
+/// `POST /api/chat/attachments` 上传成功体。
+struct ChatAttachmentDTO: Decodable, Equatable {
+    let id: String
+    let kind: String?
+    let mimeType: String?
+    let sizeBytes: Int?
+    let width: Int?
+    let height: Int?
+    let url: String?
+    let expiresAt: String?
+    let createdAt: String?
 }

@@ -287,15 +287,12 @@ final class EasyAccountViewModel: ObservableObject {
         inputText = ""
         draftAttachments = []
 
-        // 服务端仍只收文本；纯图片时用占位文案走通对话轮次，气泡里展示本地附件。
-        let outboundText = text.isEmpty ? "【图片】" : text
-
-        // 上一轮未结束（或已有排队）：先入队保序，结束后自动发送。
+        // 纯图片允许 content 为空：先上传拿 attachmentIds，再开 SSE；气泡仍展示本地 JPEG。
         if waitingReply || !pendingOutboundIds.isEmpty {
-            enqueuePending(outboundText, attachmentJPEGs: jpegs)
+            enqueuePending(text, attachmentJPEGs: jpegs)
             return
         }
-        dispatchOutbound(text: outboundText, attachmentJPEGs: jpegs)
+        dispatchOutbound(text: text, attachmentJPEGs: jpegs)
     }
 
     func addDraftImages(_ images: [UIImage]) {
@@ -550,6 +547,7 @@ final class EasyAccountViewModel: ObservableObject {
             httpBase: httpBase,
             token: token,
             content: text,
+            jpegAttachments: attachmentJPEGs,
             onEvent: { [weak self] event in
                 guard let self, self.chatGeneration == generation else { return }
                 self.handleSSEEvent(event)
@@ -575,7 +573,11 @@ final class EasyAccountViewModel: ObservableObject {
         }
 
         pendingOutboundIds.removeFirst()
-        dispatchOutbound(text: message.text, messageId: id)
+        dispatchOutbound(
+            text: message.text,
+            messageId: id,
+            attachmentJPEGs: message.attachmentJPEGs
+        )
     }
 
     private func handleSSEEvent(_ event: SseChatEvent) {
