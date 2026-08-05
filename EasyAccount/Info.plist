@@ -57,6 +57,10 @@
 	<string>用于按住说话，将语音识别为记账文字</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>用于把语音转换成输入框中的文字，方便记账</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄记账相关的小票或截图，作为聊天附件</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于从相册选择图片，作为聊天附件</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
