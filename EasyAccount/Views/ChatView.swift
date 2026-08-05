@@ -864,50 +864,53 @@ struct MessageBubble: View {
                 Text(message.text)
                     .font(.system(size: 16))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 252, alignment: .leading)
             }
         }
         .padding(.horizontal, message.attachmentJPEGs.isEmpty ? 14 : 10)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 280, alignment: .leading)
+        .padding(.vertical, message.attachmentJPEGs.isEmpty ? 10 : 8)
         .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
         .clipShape(shape)
         .contentShape(shape)
     }
 
+    /// 对话内附件统一为小缩略图（单张/多张同尺寸），点按可全屏预览。
     @ViewBuilder
     private func userAttachmentStrip(_ jpegs: [Data]) -> some View {
         let images = jpegs.compactMap { UIImage(data: $0) }
-        if images.count == 1, let image = images.first {
-            Button {
-                previewImage = image
-            } label: {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 168)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        } else if !images.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { _, image in
-                        Button {
-                            previewImage = image
-                        } label: {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 96, height: 96)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        let thumb: CGFloat = 72
+        if !images.isEmpty {
+            Group {
+                if images.count <= 3 {
+                    HStack(spacing: 6) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                            userAttachmentThumbnail(image, size: thumb)
                         }
-                        .buttonStyle(.plain)
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                                userAttachmentThumbnail(image, size: thumb)
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func userAttachmentThumbnail(_ image: UIImage, size: CGFloat) -> some View {
+        Button {
+            previewImage = image
+        } label: {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
