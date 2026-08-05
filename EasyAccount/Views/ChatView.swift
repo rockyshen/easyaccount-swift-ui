@@ -692,6 +692,19 @@ private struct PreviewableImage: Identifiable {
     let image: UIImage
 }
 
+private extension View {
+    /// 聊天列表：长对话初始停在底部；iOS 18+ 短内容仍按顶部对齐，避免整块贴底难读。
+    @ViewBuilder
+    func eaChatScrollAnchors() -> some View {
+        if #available(iOS 18.0, *) {
+            self.defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.top, for: .alignment)
+        } else {
+            self.defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
 /// 按住说话时的蓝色声波提示（取消态变为灰色）。
 struct VoiceSoundWaveView: View {
     var isActive: Bool
