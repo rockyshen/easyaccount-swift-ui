@@ -442,11 +442,16 @@ struct ChatAttachSheet: View {
     }
 
     private func pickRecent(_ item: RecentPhotoItem) {
-        guard remainingSlots > 0 else { return }
         guard pickingRecentId == nil else { return }
         pickingRecentId = item.id
         Task {
-            let image = await recentLibrary.loadFullImage(for: item) ?? item.thumbnail
+            let image: UIImage
+            if remainingSlots > 0 {
+                image = await recentLibrary.loadFullImage(for: item) ?? item.thumbnail
+            } else {
+                // 交给上层 toast 名额已满；避免无意义的高清拉取。
+                image = item.thumbnail
+            }
             onPickRecent(image)
             pickingRecentId = nil
         }

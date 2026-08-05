@@ -796,43 +796,17 @@ struct MessageBubble: View {
             .padding(.trailing, 40)
 
         case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if !message.attachmentJPEGs.isEmpty {
-                    userAttachmentStrip(message.attachmentJPEGs)
-                }
-
-                if showsUserTextBubble {
-                    Text(message.text)
-                        .font(.system(size: 16))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
-                        .clipShape(
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 18,
-                                bottomLeadingRadius: 18,
-                                bottomTrailingRadius: 6,
-                                topTrailingRadius: 18,
-                                style: .continuous
-                            )
-                        )
-                        .contentShape(
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 18,
-                                bottomLeadingRadius: 18,
-                                bottomTrailingRadius: 6,
-                                topTrailingRadius: 18,
-                                style: .continuous
-                            )
-                        )
-                        .onTapGesture {
-                            onUserShortTap?()
-                        }
-                        .onLongPressGesture(minimumDuration: 0.35) {
-                            onUserLongPressCopy?()
-                        }
-                }
+            VStack(alignment: .trailing, spacing: 4) {
+                // 图片 + 文字合进同一条用户气泡，避免缩略图条与文字分居左右。
+                userCombinedBubble
+                    .onTapGesture {
+                        guard showsUserTextBubble else { return }
+                        onUserShortTap?()
+                    }
+                    .onLongPressGesture(minimumDuration: 0.35) {
+                        guard showsUserTextBubble else { return }
+                        onUserLongPressCopy?()
+                    }
 
                 if message.pending {
                     HStack(spacing: 4) {
@@ -860,20 +834,64 @@ struct MessageBubble: View {
         }
     }
 
+    private var userCombinedBubble: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: 18,
+            bottomLeadingRadius: 18,
+            bottomTrailingRadius: 6,
+            topTrailingRadius: 18,
+            style: .continuous
+        )
+
+        return VStack(alignment: .leading, spacing: 8) {
+            if !message.attachmentJPEGs.isEmpty {
+                userAttachmentStrip(message.attachmentJPEGs)
+            }
+
+            if showsUserTextBubble {
+                Text(message.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, message.attachmentJPEGs.isEmpty ? 14 : 10)
+        .padding(.vertical, message.attachmentJPEGs.isEmpty ? 10 : 10)
+        .frame(minWidth: showsUserTextBubble ? 0 : nil)
+        .frame(maxWidth: 280, alignment: .leading)
+        .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+        .clipShape(shape)
+        .contentShape(shape)
+    }
+
     @ViewBuilder
     private func userAttachmentStrip(_ jpegs: [Data]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(jpegs.enumerated()), id: \.offset) { _, data in
-                    if let image = UIImage(data: data) {
+        let images = jpegs.compactMap { UIImage(data: $0) }
+        if images.count == 1, let image = images.first {
+            Button {
+                previewImage = image
+            } label: {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 168)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        } else if !images.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { _, image in
                         Button {
                             previewImage = image
                         } label: {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 88, height: 88)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .frame(width: 96, height: 96)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
