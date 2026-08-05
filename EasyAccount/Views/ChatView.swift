@@ -94,6 +94,10 @@ struct ChatView: View {
                 onImage: { image in
                     showCameraPicker = false
                     vm.addDraftImages([image])
+                    // 选完图后回到输入框，方便继续补文字说明。
+                    DispatchQueue.main.async {
+                        inputFocused = true
+                    }
                 },
                 onCancel: {
                     showCameraPicker = false
@@ -608,6 +612,8 @@ struct ChatView: View {
         }
         if !images.isEmpty {
             vm.addDraftImages(images)
+            // 选完图后回到输入框，方便继续补文字说明。
+            inputFocused = true
         } else if !items.isEmpty {
             vm.showToast("无法读取所选图片")
         }
