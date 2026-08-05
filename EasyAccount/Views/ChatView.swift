@@ -56,29 +56,47 @@ struct ChatView: View {
             composer
         }
         .background(EATheme.background.ignoresSafeArea())
-        .confirmationDialog("添加附件", isPresented: $showAttachMenu, titleVisibility: .visible) {
-            Button("相册") {
-                guard vm.remainingDraftAttachmentSlots > 0 else {
-                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
-                    return
+        .sheet(isPresented: $showAttachMenu) {
+            ChatAttachSheet(
+                isPresented: $showAttachMenu,
+                remainingSlots: vm.remainingDraftAttachmentSlots,
+                onPickRecent: { image in
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    vm.addDraftImages([image])
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                },
+                onPhotos: {
+                    showAttachMenu = false
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    // 等 sheet 收起再弹系统相册，避免多层模态抢焦点。
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showPhotoPicker = true
+                    }
+                },
+                onCamera: {
+                    showAttachMenu = false
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                        vm.showToast("当前设备无法使用相机")
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showCameraPicker = true
+                    }
+                },
+                onFiles: {
+                    vm.showToast("文件附件即将开放")
                 }
-                showPhotoPicker = true
-            }
-            Button("拍照") {
-                guard vm.remainingDraftAttachmentSlots > 0 else {
-                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
-                    return
-                }
-                guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-                    vm.showToast("当前设备无法使用相机")
-                    return
-                }
-                showCameraPicker = true
-            }
-            Button("文件") {
-                vm.showToast("文件附件即将开放")
-            }
-            Button("取消", role: .cancel) {}
+            )
         }
         .photosPicker(
             isPresented: $showPhotoPicker,
