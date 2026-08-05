@@ -54,14 +54,39 @@ final class ChatSSEClient {
     var isStreaming: Bool { streamTask != nil }
 
     /// 发起一轮对话；`onEvent` 在主线程回调。同一实例同时只允许一轮。
+    /// - Parameters:
+    ///   - jpegAttachments: 本地 JPEG；发送前会逐个 `POST /api/chat/attachments`，再把 id 写入开聊请求。
     func stream(
         httpBase: String,
         token: String,
         content: String,
+        jpegAttachments: [Data] = [],
         onEvent: @escaping (SseChatEvent) -> Void
     ) async throws {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ChatSSEError.emptyContent }
+        guard !trimmed.isEmpty || !jpegAttachments.isEmpty else {
+            throw ChatSSEError.emptyContent
+        }
+
+        var attachmentIds: [String] = []
+        for (index, jpeg) in jpegAttachments.enumerated() {
+            let uploaded: ChatAttachmentDTO
+            do {
+                uploaded = try await ChatAttachmentService.upload(
+                    httpBase: httpBase,
+                    token: token,
+                    jpegData: jpeg,
+                    filename: "image-\(index + 1).jpg"
+                )
+            } catch let api as APIError {
+                throw ChatSSEError.http(status: api.status, message: api.message)
+            }
+            let id = uploaded.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
+                throw ChatSSEError.http(status: 500, message: "上传成功但未返回附件 id")
+            }
+            attachmentIds.append(id)
+        }
 
         let base = APIClient.stripTrailingSlash(httpBase)
         guard let url = URL(string: "\(base)/api/chat") else {
@@ -73,7 +98,9 @@ final class ChatSSEClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONEncoder().encode(ChatOutbound(content: trimmed))
+        request.httpBody = try JSONEncoder().encode(
+            ChatOutbound(content: trimmed, attachmentIds: attachmentIds)
+        )
 
         try await runBytesRequest(request, onEvent: onEvent)
     }
@@ -143,6 +170,7 @@ final class ChatSSEClient {
         httpBase: String,
         token: String,
         content: String,
+        jpegAttachments: [Data] = [],
         onEvent: @escaping (SseChatEvent) -> Void,
         onComplete: @escaping (Result<Void, ChatSSEError>) -> Void
     ) -> Task<Void, Never> {
@@ -151,6 +179,7 @@ final class ChatSSEClient {
                 httpBase: httpBase,
                 token: token,
                 content: content,
+                jpegAttachments: jpegAttachments,
                 onEvent: onEvent
             )
         }
