@@ -67,6 +67,8 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var inputText: String = ""
     @Published var waitingReply: Bool = false
+    /// 输入框待命附件（Cursor 式：先暂存，发送时再带走）。
+    @Published var draftAttachments: [ChatDraftAttachment] = []
 
     private var token: String = ""
     private let chatClient = ChatSSEClient()
@@ -123,7 +125,12 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     var canSend: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasText || !draftAttachments.isEmpty
+    }
+
+    var remainingDraftAttachmentSlots: Int {
+        max(0, ChatAttachmentLimits.maxCount - draftAttachments.count)
     }
 
     var pendingOutboundCount: Int { pendingOutboundIds.count }
@@ -275,15 +282,38 @@ final class EasyAccountViewModel: ObservableObject {
 
     func sendChat() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let jpegs = draftAttachments.compactMap { $0.image.chatAttachmentJPEG() }
+        guard !text.isEmpty || !jpegs.isEmpty else { return }
         inputText = ""
+        draftAttachments = []
 
-        // 上一轮未结束（或已有排队）：先入队保序，结束后自动发送。
+        // 纯图片允许 content 为空：先上传拿 attachmentIds，再开 SSE；气泡仍展示本地 JPEG。
         if waitingReply || !pendingOutboundIds.isEmpty {
-            enqueuePending(text)
+            enqueuePending(text, attachmentJPEGs: jpegs)
             return
         }
-        dispatchOutbound(text: text)
+        dispatchOutbound(text: text, attachmentJPEGs: jpegs)
+    }
+
+    func addDraftImages(_ images: [UIImage]) {
+        guard !images.isEmpty else { return }
+        var added = 0
+        for image in images {
+            guard draftAttachments.count < ChatAttachmentLimits.maxCount else { break }
+            draftAttachments.append(ChatDraftAttachment(id: UUID(), image: image))
+            added += 1
+        }
+        if added < images.count {
+            showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+        }
+    }
+
+    func removeDraftAttachment(id: UUID) {
+        draftAttachments.removeAll { $0.id == id }
+    }
+
+    func clearDraftAttachments() {
+        draftAttachments = []
     }
 
     func sendSuggestion(_ text: String) {
@@ -466,14 +496,26 @@ final class EasyAccountViewModel: ObservableObject {
 
     // MARK: - SSE chat
 
-    private func enqueuePending(_ text: String) {
+    private func enqueuePending(_ text: String, attachmentJPEGs: [Data] = []) {
         let id = nextId()
-        pushMessage(ChatMessage(id: id, kind: .user, text: text, pending: true))
+        pushMessage(
+            ChatMessage(
+                id: id,
+                kind: .user,
+                text: text,
+                pending: true,
+                attachmentJPEGs: attachmentJPEGs
+            )
+        )
         pendingOutboundIds.append(id)
     }
 
     /// 真正发起一轮 SSE；`messageId` 非空表示从缓存队列取出。
-    private func dispatchOutbound(text: String, messageId: Int? = nil) {
+    private func dispatchOutbound(
+        text: String,
+        messageId: Int? = nil,
+        attachmentJPEGs: [Data] = []
+    ) {
         guard !token.isEmpty else {
             Task { await forceToLogin("请先登录") }
             return
@@ -485,7 +527,14 @@ final class EasyAccountViewModel: ObservableObject {
             outboundId = messageId
         } else {
             outboundId = nextId()
-            pushMessage(ChatMessage(id: outboundId, kind: .user, text: text))
+            pushMessage(
+                ChatMessage(
+                    id: outboundId,
+                    kind: .user,
+                    text: text,
+                    attachmentJPEGs: attachmentJPEGs
+                )
+            )
         }
         currentOutboundMessageId = outboundId
 
@@ -498,6 +547,7 @@ final class EasyAccountViewModel: ObservableObject {
             httpBase: httpBase,
             token: token,
             content: text,
+            jpegAttachments: attachmentJPEGs,
             onEvent: { [weak self] event in
                 guard let self, self.chatGeneration == generation else { return }
                 self.handleSSEEvent(event)
@@ -523,7 +573,11 @@ final class EasyAccountViewModel: ObservableObject {
         }
 
         pendingOutboundIds.removeFirst()
-        dispatchOutbound(text: message.text, messageId: id)
+        dispatchOutbound(
+            text: message.text,
+            messageId: id,
+            attachmentJPEGs: message.attachmentJPEGs
+        )
     }
 
     private func handleSSEEvent(_ event: SseChatEvent) {
@@ -995,6 +1049,7 @@ final class EasyAccountViewModel: ObservableObject {
         connected = false
         endWaitingReply()
         inputText = ""
+        draftAttachments = []
         streamingMsgId = nil
         pendingOutboundIds = []
         currentOutboundMessageId = nil
