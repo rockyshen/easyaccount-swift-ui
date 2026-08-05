@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -18,6 +19,12 @@ struct ChatView: View {
     private let holdCancelDistance: CGFloat = 56
     /// 按住短于此阈值视为点按：按下已即时开录，松手静默取消且不发送。
     private let holdTapMaxDuration: TimeInterval = 0.2
+
+    @State private var showAttachMenu = false
+    @State private var showPhotoPicker = false
+    @State private var showCameraPicker = false
+    @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var previewImage: UIImage?
 
     private let suggestions = [
         "今天午饭花了 35 元",
@@ -48,6 +55,69 @@ struct ChatView: View {
             composer
         }
         .background(EATheme.background.ignoresSafeArea())
+        .confirmationDialog("添加附件", isPresented: $showAttachMenu, titleVisibility: .visible) {
+            Button("相册") {
+                guard vm.remainingDraftAttachmentSlots > 0 else {
+                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                    return
+                }
+                showPhotoPicker = true
+            }
+            Button("拍照") {
+                guard vm.remainingDraftAttachmentSlots > 0 else {
+                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                    return
+                }
+                guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                    vm.showToast("当前设备无法使用相机")
+                    return
+                }
+                showCameraPicker = true
+            }
+            Button("文件") {
+                vm.showToast("文件附件即将开放")
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoPickerItems,
+            maxSelectionCount: max(1, vm.remainingDraftAttachmentSlots),
+            matching: .images
+        )
+        .onChange(of: photoPickerItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await loadPhotoPickerItems(items) }
+        }
+        .fullScreenCover(isPresented: $showCameraPicker) {
+            CameraImagePicker(
+                onImage: { image in
+                    showCameraPicker = false
+                    vm.addDraftImages([image])
+                    // 选完图后回到输入框，方便继续补文字说明。
+                    DispatchQueue.main.async {
+                        inputFocused = true
+                    }
+                },
+                onCancel: {
+                    showCameraPicker = false
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(item: previewImageBinding) { item in
+            ChatAttachmentPreviewView(image: item.image) {
+                previewImage = nil
+            }
+        }
+    }
+
+    /// 将可选 UIImage 适配为 fullScreenCover(item:)。
+    private var previewImageBinding: Binding<PreviewableImage?> {
+        Binding(
+            get: { previewImage.map { PreviewableImage(image: $0) } },
+            set: { previewImage = $0?.image }
+        )
     }
 
     /// 顶部渐隐栏：与页面背景同色，内容滚到下方时沿下沿淡出。
@@ -215,62 +285,92 @@ struct ChatView: View {
         }
     }
 
-    /// 默认文字输入（图1）：单条浅色胶囊，左 + / 中输入框 / 右语音（有字时为发送）。
+    /// 文字输入：有待命附件时为圆角卡片（Cursor 式顶部缩略图 + 输入行）；否则保持胶囊。
     private var textComposerBar: some View {
-        HStack(spacing: 10) {
-            composerCircleButton(systemName: "plus") {
-                vm.showToast("附件功能即将开放")
+        VStack(alignment: .leading, spacing: 10) {
+            if !vm.draftAttachments.isEmpty {
+                attachmentStagingRow
             }
 
-            TextField(
-                vm.composerPlaceholder,
-                text: $vm.inputText,
-                axis: .vertical
-            )
-            .lineLimit(1...5)
-            .focused($inputFocused)
-            .font(.system(size: 16))
-            .foregroundStyle(EATheme.label)
-            .onSubmit {
-                sendFromComposer()
-            }
-
-            if vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if vm.waitingReply {
-                    // 仅用户点停止才调服务端 cancel；进后台断连不会走这里。
-                    Button {
-                        vm.stopGeneration()
-                    } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(EATheme.label)
-                            .frame(width: 36, height: 36)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("停止生成")
-                } else {
-                    composerCircleButton(systemName: "dot.radiowaves.right") {
-                        Task { await enterVoiceMode() }
-                    }
+            HStack(spacing: 10) {
+                composerCircleButton(systemName: "plus") {
+                    presentAttachMenu()
                 }
-            } else {
-                Button {
+
+                TextField(
+                    vm.composerPlaceholder,
+                    text: $vm.inputText,
+                    axis: .vertical
+                )
+                .lineLimit(1...5)
+                .focused($inputFocused)
+                .font(.system(size: 16))
+                .foregroundStyle(EATheme.label)
+                .onSubmit {
                     sendFromComposer()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(vm.canSend ? EATheme.blue : EATheme.tertiary)
-                        .frame(width: 36, height: 36)
                 }
-                .disabled(!vm.canSend)
-                .buttonStyle(.plain)
+
+                composerTrailingActions
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(EATheme.surface)
-        .clipShape(Capsule())
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: vm.draftAttachments.isEmpty ? 28 : 22,
+                style: .continuous
+            )
+        )
         .shadow(color: Color.black.opacity(0.06), radius: 8, y: 3)
+        .animation(.easeOut(duration: 0.18), value: vm.draftAttachments.count)
+    }
+
+    private var attachmentStagingRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(vm.draftAttachments) { draft in
+                    DraftAttachmentThumbnail(
+                        image: draft.image,
+                        onTap: { previewImage = draft.image },
+                        onRemove: { vm.removeDraftAttachment(id: draft.id) }
+                    )
+                }
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var composerTrailingActions: some View {
+        if vm.canSend {
+            Button {
+                sendFromComposer()
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(EATheme.blue)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("发送")
+        } else if vm.waitingReply {
+            Button {
+                vm.stopGeneration()
+            } label: {
+                Image(systemName: "stop.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(EATheme.label)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("停止生成")
+        } else {
+            composerCircleButton(systemName: "dot.radiowaves.right") {
+                Task { await enterVoiceMode() }
+            }
+        }
     }
 
     /// 语音模式：单条白色胶囊，左 + / 中「按住说话」/ 右键盘；按住后变为蓝色长条。
@@ -280,7 +380,7 @@ struct ChatView: View {
     private var voiceComposerBar: some View {
         HStack(spacing: 10) {
             composerCircleButton(systemName: "plus") {
-                vm.showToast("附件功能即将开放")
+                presentAttachMenu()
             }
             .opacity(isHoldPressing ? 0 : 1)
             .allowsHitTesting(!isHoldPressing)
@@ -478,10 +578,45 @@ struct ChatView: View {
     }
 
     private func sendFromComposer() {
-        let text = vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard vm.canSend else { return }
         dismissKeyboard()
         vm.sendChat()
+    }
+
+    private func presentAttachMenu() {
+        if voiceMode {
+            // 回到文字输入以便看到待命缩略图。
+            if speech.isListening || speech.isFinalizing {
+                speech.cancel()
+            }
+            isHoldPressing = false
+            willCancelHold = false
+            holdGestureBegan = false
+            holdPressStartedAt = nil
+            withAnimation(.easeInOut(duration: 0.15)) {
+                voiceMode = false
+            }
+        }
+        showAttachMenu = true
+    }
+
+    @MainActor
+    private func loadPhotoPickerItems(_ items: [PhotosPickerItem]) async {
+        defer { photoPickerItems = [] }
+        var images: [UIImage] = []
+        for item in items {
+            guard vm.draftAttachments.count + images.count < ChatAttachmentLimits.maxCount else { break }
+            if let picked = try? await item.loadTransferable(type: ChatPickedImage.self) {
+                images.append(picked.image)
+            }
+        }
+        if !images.isEmpty {
+            vm.addDraftImages(images)
+            // 选完图后回到输入框，方便继续补文字说明。
+            inputFocused = true
+        } else if !items.isEmpty {
+            vm.showToast("无法读取所选图片")
+        }
     }
 
     /// 短按用户气泡：把内容回填到输入框以便重新编辑发送。
@@ -496,6 +631,11 @@ struct ChatView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         vm.showToast("已复制")
     }
+}
+
+private struct PreviewableImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 
 /// 按住说话时的蓝色声波提示（取消态变为灰色）。
@@ -536,8 +676,33 @@ struct MessageBubble: View {
     let message: ChatMessage
     var onUserShortTap: (() -> Void)? = nil
     var onUserLongPressCopy: (() -> Void)? = nil
+    @State private var previewImage: UIImage?
 
     var body: some View {
+        bubbleContent
+            .fullScreenCover(item: previewBinding) { item in
+                ChatAttachmentPreviewView(image: item.image) {
+                    previewImage = nil
+                }
+            }
+    }
+
+    private var previewBinding: Binding<PreviewableImage?> {
+        Binding(
+            get: { previewImage.map { PreviewableImage(image: $0) } },
+            set: { previewImage = $0?.image }
+        )
+    }
+
+    private var showsUserTextBubble: Bool {
+        let text = message.text
+        guard !text.isEmpty else { return false }
+        if text == "【图片】", !message.attachmentJPEGs.isEmpty { return false }
+        return true
+    }
+
+    @ViewBuilder
+    private var bubbleContent: some View {
         switch message.kind {
         case .system:
             Text(message.text)
@@ -576,37 +741,43 @@ struct MessageBubble: View {
             .padding(.trailing, 40)
 
         case .user:
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(message.text)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
-                    .clipShape(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 18,
-                            bottomLeadingRadius: 18,
-                            bottomTrailingRadius: 6,
-                            topTrailingRadius: 18,
-                            style: .continuous
+            VStack(alignment: .trailing, spacing: 6) {
+                if !message.attachmentJPEGs.isEmpty {
+                    userAttachmentStrip(message.attachmentJPEGs)
+                }
+
+                if showsUserTextBubble {
+                    Text(message.text)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+                        .clipShape(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: 18,
+                                bottomLeadingRadius: 18,
+                                bottomTrailingRadius: 6,
+                                topTrailingRadius: 18,
+                                style: .continuous
+                            )
                         )
-                    )
-                    .contentShape(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 18,
-                            bottomLeadingRadius: 18,
-                            bottomTrailingRadius: 6,
-                            topTrailingRadius: 18,
-                            style: .continuous
+                        .contentShape(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: 18,
+                                bottomLeadingRadius: 18,
+                                bottomTrailingRadius: 6,
+                                topTrailingRadius: 18,
+                                style: .continuous
+                            )
                         )
-                    )
-                    .onTapGesture {
-                        onUserShortTap?()
-                    }
-                    .onLongPressGesture(minimumDuration: 0.35) {
-                        onUserLongPressCopy?()
-                    }
+                        .onTapGesture {
+                            onUserShortTap?()
+                        }
+                        .onLongPressGesture(minimumDuration: 0.35) {
+                            onUserLongPressCopy?()
+                        }
+                }
 
                 if message.pending {
                     HStack(spacing: 4) {
@@ -631,6 +802,28 @@ struct MessageBubble: View {
                 .background(EATheme.danger.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func userAttachmentStrip(_ jpegs: [Data]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(jpegs.enumerated()), id: \.offset) { _, data in
+                    if let image = UIImage(data: data) {
+                        Button {
+                            previewImage = image
+                        } label: {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 88, height: 88)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 }

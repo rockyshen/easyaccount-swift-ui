@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum ChatMessageKind: String, Equatable, Codable {
     case system
@@ -14,6 +15,57 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var streaming: Bool = false
     /// 已展示在对话中，等待上一轮 SSE 结束后再真正发往服务端。
     var pending: Bool = false
+    /// 本地附件 JPEG（仅会话内展示；编码时忽略，不写入持久化）。
+    var attachmentJPEGs: [Data] = []
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, text, streaming, pending
+    }
+
+    init(
+        id: Int,
+        kind: ChatMessageKind,
+        text: String,
+        streaming: Bool = false,
+        pending: Bool = false,
+        attachmentJPEGs: [Data] = []
+    ) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.streaming = streaming
+        self.pending = pending
+        self.attachmentJPEGs = attachmentJPEGs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        kind = try container.decode(ChatMessageKind.self, forKey: .kind)
+        text = try container.decode(String.self, forKey: .text)
+        streaming = try container.decodeIfPresent(Bool.self, forKey: .streaming) ?? false
+        pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        attachmentJPEGs = []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(text, forKey: .text)
+        try container.encode(streaming, forKey: .streaming)
+        try container.encode(pending, forKey: .pending)
+    }
+}
+
+/// 输入框待命区中的本地附件（发送前可增删预览）。
+struct ChatDraftAttachment: Identifiable, Equatable {
+    let id: UUID
+    let image: UIImage
+
+    static func == (lhs: ChatDraftAttachment, rhs: ChatDraftAttachment) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 /// SSE `data:` JSON 载荷（与 event 名对应的 type 可作校验）。
