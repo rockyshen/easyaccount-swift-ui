@@ -56,29 +56,47 @@ struct ChatView: View {
             composer
         }
         .background(EATheme.background.ignoresSafeArea())
-        .confirmationDialog("添加附件", isPresented: $showAttachMenu, titleVisibility: .visible) {
-            Button("相册") {
-                guard vm.remainingDraftAttachmentSlots > 0 else {
-                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
-                    return
+        .sheet(isPresented: $showAttachMenu) {
+            ChatAttachSheet(
+                isPresented: $showAttachMenu,
+                remainingSlots: vm.remainingDraftAttachmentSlots,
+                onPickRecent: { image in
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    vm.addDraftImages([image])
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                },
+                onPhotos: {
+                    showAttachMenu = false
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    // 等 sheet 收起再弹系统相册，避免多层模态抢焦点。
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showPhotoPicker = true
+                    }
+                },
+                onCamera: {
+                    showAttachMenu = false
+                    guard vm.remainingDraftAttachmentSlots > 0 else {
+                        vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
+                        return
+                    }
+                    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                        vm.showToast("当前设备无法使用相机")
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showCameraPicker = true
+                    }
+                },
+                onFiles: {
+                    vm.showToast("文件附件即将开放")
                 }
-                showPhotoPicker = true
-            }
-            Button("拍照") {
-                guard vm.remainingDraftAttachmentSlots > 0 else {
-                    vm.showToast("最多添加 \(ChatAttachmentLimits.maxCount) 张图片")
-                    return
-                }
-                guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-                    vm.showToast("当前设备无法使用相机")
-                    return
-                }
-                showCameraPicker = true
-            }
-            Button("文件") {
-                vm.showToast("文件附件即将开放")
-            }
-            Button("取消", role: .cancel) {}
+            )
         }
         .photosPicker(
             isPresented: $showPhotoPicker,
@@ -237,8 +255,7 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.interactively)
             // 即使内容不足一屏也允许回弹，短对话可轻微上划。
             .scrollBounceBehavior(.always)
-            // 重新打开时默认停在最新消息，而不是历史顶部。
-            .defaultScrollAnchor(.bottom)
+            .eaChatScrollAnchors()
             .onAppear {
                 scrollChatToBottom(proxy: proxy, animated: false)
             }
@@ -675,6 +692,19 @@ private struct PreviewableImage: Identifiable {
     let image: UIImage
 }
 
+private extension View {
+    /// 聊天列表：长对话初始停在底部；iOS 18+ 短内容仍按顶部对齐，避免整块贴底难读。
+    @ViewBuilder
+    func eaChatScrollAnchors() -> some View {
+        if #available(iOS 18.0, *) {
+            self.defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.top, for: .alignment)
+        } else {
+            self.defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
 /// 按住说话时的蓝色声波提示（取消态变为灰色）。
 struct VoiceSoundWaveView: View {
     var isActive: Bool
@@ -778,43 +808,17 @@ struct MessageBubble: View {
             .padding(.trailing, 40)
 
         case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if !message.attachmentJPEGs.isEmpty {
-                    userAttachmentStrip(message.attachmentJPEGs)
-                }
-
-                if showsUserTextBubble {
-                    Text(message.text)
-                        .font(.system(size: 16))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
-                        .clipShape(
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 18,
-                                bottomLeadingRadius: 18,
-                                bottomTrailingRadius: 6,
-                                topTrailingRadius: 18,
-                                style: .continuous
-                            )
-                        )
-                        .contentShape(
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 18,
-                                bottomLeadingRadius: 18,
-                                bottomTrailingRadius: 6,
-                                topTrailingRadius: 18,
-                                style: .continuous
-                            )
-                        )
-                        .onTapGesture {
-                            onUserShortTap?()
-                        }
-                        .onLongPressGesture(minimumDuration: 0.35) {
-                            onUserLongPressCopy?()
-                        }
-                }
+            VStack(alignment: .trailing, spacing: 4) {
+                // 图片 + 文字合进同一条用户气泡，避免缩略图条与文字分居左右。
+                userCombinedBubble
+                    .onTapGesture {
+                        guard showsUserTextBubble else { return }
+                        onUserShortTap?()
+                    }
+                    .onLongPressGesture(minimumDuration: 0.35) {
+                        guard showsUserTextBubble else { return }
+                        onUserLongPressCopy?()
+                    }
 
                 if message.pending {
                     HStack(spacing: 4) {
@@ -842,20 +846,63 @@ struct MessageBubble: View {
         }
     }
 
+    private var userCombinedBubble: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: 18,
+            bottomLeadingRadius: 18,
+            bottomTrailingRadius: 6,
+            topTrailingRadius: 18,
+            style: .continuous
+        )
+
+        return VStack(alignment: .leading, spacing: 8) {
+            if !message.attachmentJPEGs.isEmpty {
+                userAttachmentStrip(message.attachmentJPEGs)
+            }
+
+            if showsUserTextBubble {
+                Text(message.text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, message.attachmentJPEGs.isEmpty ? 14 : 10)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 280, alignment: .leading)
+        .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
+        .clipShape(shape)
+        .contentShape(shape)
+    }
+
     @ViewBuilder
     private func userAttachmentStrip(_ jpegs: [Data]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(jpegs.enumerated()), id: \.offset) { _, data in
-                    if let image = UIImage(data: data) {
+        let images = jpegs.compactMap { UIImage(data: $0) }
+        if images.count == 1, let image = images.first {
+            Button {
+                previewImage = image
+            } label: {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 168)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        } else if !images.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { _, image in
                         Button {
                             previewImage = image
                         } label: {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 88, height: 88)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .frame(width: 96, height: 96)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }

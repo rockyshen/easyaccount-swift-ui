@@ -38,6 +38,16 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         self.attachmentJPEGs = attachmentJPEGs
     }
 
+    /// 附件 Data 不参与相等判断，避免大图导致 diff 过重 / 列表异常刷新。
+    static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
+        lhs.id == rhs.id
+            && lhs.kind == rhs.kind
+            && lhs.text == rhs.text
+            && lhs.streaming == rhs.streaming
+            && lhs.pending == rhs.pending
+            && lhs.attachmentJPEGs.count == rhs.attachmentJPEGs.count
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
