@@ -602,9 +602,8 @@ struct ChatView: View {
         var images: [UIImage] = []
         for item in items {
             guard vm.draftAttachments.count + images.count < ChatAttachmentLimits.maxCount else { break }
-            if let data = try? await item.loadTransferable(type: Data.self),
-               let image = UIImage(data: data) {
-                images.append(image)
+            if let picked = try? await item.loadTransferable(type: ChatPickedImage.self) {
+                images.append(picked.image)
             }
         }
         if !images.isEmpty {

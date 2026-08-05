@@ -1,11 +1,27 @@
+import CoreTransferable
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 enum ChatAttachmentLimits {
     static let maxCount = 9
     static let maxPixel: CGFloat = 1600
     static let jpegQuality: CGFloat = 0.78
+}
+
+/// PhotosPicker → UIImage（Data 直接 Transferable 在部分系统上不稳定）。
+struct ChatPickedImage: Transferable {
+    let image: UIImage
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .image) { data in
+            guard let image = UIImage(data: data) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return ChatPickedImage(image: image)
+        }
+    }
 }
 
 extension UIImage {
