@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct EasyAccountRootView: View {
     @EnvironmentObject private var vm: EasyAccountViewModel
@@ -10,18 +11,32 @@ struct EasyAccountRootView: View {
     @State private var menuDragTranslation: CGFloat = 0
     @State private var menuWidthCache: CGFloat = 280
     @State private var isMenuDragging = false
+    /// 复用并预热，侧栏打开震动更跟手。
+    @State private var menuOpenImpact = UIImpactFeedbackGenerator(style: .medium)
 
     /// 管理子页右划返回时的水平位移。
     @State private var managementDragOffset: CGFloat = 0
     @State private var isManagementDragging = false
 
+    /// 桥接聊天列表的滚动状态，供侧栏手势判定与「开栏前止住惯性」使用。
+    @StateObject private var scrollBridge = ChatScrollBridge()
+
     var body: some View {
         ZStack(alignment: .leading) {
             EATheme.background.ignoresSafeArea()
 
+            // 仅作为 UIKit 手势的挂载点：手势装到窗口根视图上，自身不参与布局命中。
+            SideMenuOpenPanGesture(
+                bridge: scrollBridge,
+                canBegin: { canOpenMenuByGesture },
+                onChanged: { updateMenuOpenDrag($0) },
+                onEnded: { finishMenuDrag(translation: $0, predicted: $1) }
+            )
+            .allowsHitTesting(false)
+
             mainContent
+                .environmentObject(scrollBridge)
                 .disabled(vm.showSideMenu && isChatStage)
-                .simultaneousGesture(menuOpenSwipeGesture)
                 .overlay {
                     if isChatStage, vm.showSideMenu || isMenuDragging {
                         EATheme.scrim
@@ -137,21 +152,20 @@ struct EasyAccountRootView: View {
         return min(0, max(closed, base + menuDragTranslation))
     }
 
-    /// 聊天主界面右划打开侧栏（需明显水平滑动，避免干扰列表上下滚）。
-    private var menuOpenSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 20, coordinateSpace: .local)
-            .onChanged { value in
-                guard isChatStage, vm.managementDestination == nil, !vm.showSideMenu else { return }
-                let dx = value.translation.width
-                let dy = value.translation.height
-                guard dx > 0, abs(dx) > abs(dy) * 1.15 else { return }
-                if !isMenuDragging { isMenuDragging = true }
-                menuDragTranslation = dx
-            }
-            .onEnded { value in
-                guard isMenuDragging else { return }
-                finishMenuDrag(value)
-            }
+    private var canOpenMenuByGesture: Bool {
+        isChatStage && vm.managementDestination == nil && !vm.showSideMenu
+    }
+
+    private func updateMenuOpenDrag(_ dx: CGFloat) {
+        if !isMenuDragging {
+            isMenuDragging = true
+            menuOpenImpact.prepare()
+            // 键盘挡着侧栏很别扭，起手就收起。
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+            )
+        }
+        menuDragTranslation = max(0, dx)
     }
 
     /// 侧栏打开后左划关闭。
@@ -168,20 +182,26 @@ struct EasyAccountRootView: View {
             }
             .onEnded { value in
                 guard isMenuDragging else { return }
-                finishMenuDrag(value)
+                finishMenuDrag(
+                    translation: value.translation.width,
+                    predicted: value.predictedEndTranslation.width
+                )
             }
     }
 
-    private func finishMenuDrag(_ value: DragGesture.Value) {
-        let dx = value.translation.width
-        let predicted = value.predictedEndTranslation.width
+    private func finishMenuDrag(translation: CGFloat, predicted: CGFloat) {
         let threshold = menuWidthCache * 0.28
+        let wasOpen = vm.showSideMenu
         let shouldOpen: Bool
 
-        if vm.showSideMenu {
-            shouldOpen = !(dx < -threshold || predicted < -menuWidthCache * 0.45)
+        if wasOpen {
+            shouldOpen = !(translation < -threshold || predicted < -menuWidthCache * 0.45)
         } else {
-            shouldOpen = dx > threshold || predicted > menuWidthCache * 0.45
+            shouldOpen = translation > threshold || predicted > menuWidthCache * 0.45
+        }
+
+        if shouldOpen && !wasOpen {
+            playSideMenuOpenHaptic()
         }
 
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -197,6 +217,11 @@ struct EasyAccountRootView: View {
             menuDragTranslation = 0
             isMenuDragging = false
         }
+    }
+
+    private func playSideMenuOpenHaptic() {
+        menuOpenImpact.impactOccurred()
+        menuOpenImpact.prepare()
     }
 
     /// 管理子页从左缘右划返回（自定义覆盖层，无系统 interactive pop）。
@@ -330,6 +355,203 @@ extension ToolbarContent {
         #else
         self
         #endif
+    }
+}
+
+/// 聊天列表底层 `UIScrollView` 的桥接口。
+///
+/// SwiftUI 拿不到滚动阶段（`onScrollPhaseChange` 要 iOS 18），也没法终止惯性减速，
+/// 而侧栏手势必须知道列表是否在动、并能在开栏前把它按住，因此下探到 UIKit。
+final class ChatScrollBridge: ObservableObject {
+    private weak var scrollView: UIScrollView?
+    private weak var openPanGesture: UIGestureRecognizer?
+
+    /// 列表正被拖动或处于惯性减速中。
+    ///
+    /// 这里敢直接读 `isDragging`：开栏手势通过 `require(toFail:)` 排在列表 pan 之前，
+    /// 判定时列表 pan 还没可能 began；若探测失败未建立依赖，`scrollView` 为空则一律放行，
+    /// 是 fail-open 而非把开栏拦死。
+    var isScrolling: Bool {
+        guard let scrollView else { return false }
+        return scrollView.isDragging || scrollView.isDecelerating
+    }
+
+    func attach(scrollView: UIScrollView) {
+        guard self.scrollView !== scrollView else { return }
+        self.scrollView = scrollView
+        linkGestures()
+    }
+
+    func attach(openPanGesture: UIGestureRecognizer) {
+        guard self.openPanGesture !== openPanGesture else { return }
+        self.openPanGesture = openPanGesture
+        linkGestures()
+    }
+
+    /// 让列表的竖向拖动等侧栏手势判定失败后再开始：一次手势内方向互斥，不会边滚边开栏。
+    private func linkGestures() {
+        guard let scrollView, let openPanGesture else { return }
+        scrollView.panGestureRecognizer.require(toFail: openPanGesture)
+    }
+
+    /// 立刻停在当前位置，终止惯性减速。
+    func stopScrolling() {
+        guard let scrollView, isScrolling else { return }
+        // 回弹区内直接定位会把内容卡在越界位置，先夹回合法范围。
+        let inset = scrollView.adjustedContentInset
+        let minY = -inset.top
+        let maxY = max(minY, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
+        var offset = scrollView.contentOffset
+        offset.y = min(max(offset.y, minY), maxY)
+        scrollView.setContentOffset(offset, animated: false)
+    }
+}
+
+/// 放进聊天列表内容里，向上找到承载它的 `UIScrollView` 并登记到 bridge。
+struct ChatScrollViewProbe: UIViewRepresentable {
+    let bridge: ChatScrollBridge
+
+    func makeUIView(context: Context) -> UIView {
+        let view = ProbeView()
+        view.isUserInteractionEnabled = false
+        view.onFind = { [bridge] scrollView in
+            bridge.attach(scrollView: scrollView)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    private final class ProbeView: UIView {
+        var onFind: ((UIScrollView) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            var candidate = superview
+            while let view = candidate {
+                if let scrollView = view as? UIScrollView {
+                    onFind?(scrollView)
+                    return
+                }
+                candidate = view.superview
+            }
+        }
+    }
+}
+
+/// 右划唤出侧栏的 UIKit 手势。
+///
+/// 用 `UIPanGestureRecognizer` 而非 SwiftUI `DragGesture`：`UIScrollView` 的 pan 会在极小位移
+/// 就抢下手势并锁定竖向，`simultaneousGesture` 挂上去的 DragGesture 常收不到后续更新，
+/// 表现就是「列表静止时也很难右划开栏」。
+struct SideMenuOpenPanGesture: UIViewRepresentable {
+    let bridge: ChatScrollBridge
+    let canBegin: () -> Bool
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (_ translation: CGFloat, _ predicted: CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(bridge: bridge, canBegin: canBegin, onChanged: onChanged, onEnded: onEnded)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = AttachView()
+        view.isUserInteractionEnabled = false
+        let coordinator = context.coordinator
+        view.onAttach = { host in
+            coordinator.attach(to: host)
+            bridge.attach(openPanGesture: coordinator.pan)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.canBegin = canBegin
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private let bridge: ChatScrollBridge
+        var canBegin: () -> Bool
+        var onChanged: (CGFloat) -> Void
+        var onEnded: (CGFloat, CGFloat) -> Void
+
+        lazy var pan: UIPanGestureRecognizer = {
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
+            pan.delegate = self
+            pan.maximumNumberOfTouches = 1
+            // 手势挂在根视图上，默认会压住整个界面的 touchesEnded，让按钮点击显得迟滞。
+            pan.delaysTouchesEnded = false
+            return pan
+        }()
+
+        init(
+            bridge: ChatScrollBridge,
+            canBegin: @escaping () -> Bool,
+            onChanged: @escaping (CGFloat) -> Void,
+            onEnded: @escaping (CGFloat, CGFloat) -> Void
+        ) {
+            self.bridge = bridge
+            self.canBegin = canBegin
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func attach(to view: UIView) {
+            guard pan.view !== view else { return }
+            view.addGestureRecognizer(pan)
+        }
+
+        @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+            guard let view = pan.view else { return }
+            let dx = pan.translation(in: view).x
+            switch pan.state {
+            case .began, .changed:
+                onChanged(dx)
+            case .ended:
+                // 对齐 SwiftUI predictedEndTranslation 的口径：按松手速度外推约 0.3s。
+                onEnded(dx, dx + pan.velocity(in: view).x * 0.3)
+            case .cancelled, .failed:
+                onEnded(dx, dx)
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+            guard let pan = gesture as? UIPanGestureRecognizer, let view = pan.view else { return false }
+            guard canBegin(), !bridge.isScrolling else { return false }
+            // 只接明确的右向水平滑动，其余立刻判失败，把手势交还给列表滚动。
+            let translation = pan.translation(in: view)
+            return translation.x > 0 && translation.x > abs(translation.y) * 1.2
+        }
+
+        func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            // 输入框内的横向拖动用于移动光标，不抢。
+            var candidate = touch.view
+            while let view = candidate {
+                if view is UITextView || view is UITextField { return false }
+                candidate = view.superview
+            }
+            return true
+        }
+    }
+
+    private final class AttachView: UIView {
+        var onAttach: ((UIView) -> Void)?
+
+        /// 手势要装在窗口根视图上才能覆盖整个聊天区；自身若铺开成透明层会吃掉底下的点击。
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard let window else { return }
+            var host: UIView = self
+            while let parent = host.superview, parent !== window {
+                host = parent
+            }
+            onAttach?(host)
+        }
     }
 }
 
