@@ -592,25 +592,37 @@ final class EasyAccountViewModel: ObservableObject {
             }
             applyStreamCursor(streamId: streamId, eventId: eventId)
             if streamingMsgId == nil {
-                let id = nextId()
-                streamingMsgId = id
-                pushMessage(ChatMessage(id: id, kind: .assistant, text: chunk, streaming: true))
-            } else if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+                insertAssistantBubble(text: chunk)
+            } else if let sid = streamingMsgId,
+                      let idx = messages.firstIndex(where: { $0.id == sid && $0.kind == .assistant }) {
                 messages[idx].text += chunk
                 messages[idx].streaming = true
+            } else {
+                // streamingMsgId 失效或指向非助手时，重新在用户消息后挂一条。
+                insertAssistantBubble(text: chunk)
             }
             persistStreamingBubbleNow()
             schedulePersistChatMessages()
         case .end(let content, let streamId, let eventId):
             applyStreamCursor(streamId: streamId, eventId: eventId)
-            if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+            if let sid = streamingMsgId,
+               let idx = messages.firstIndex(where: { $0.id == sid && $0.kind == .assistant }) {
                 if !content.isEmpty {
                     messages[idx].text = content
                 }
                 messages[idx].streaming = false
                 streamingMsgId = nil
             } else if !content.isEmpty {
-                pushMessage(ChatMessage(id: nextId(), kind: .assistant, text: content))
+                // 未先收到 delta 时直接定稿：仍插在当前用户消息后面。
+                let id = nextId()
+                let bubble = ChatMessage(id: id, kind: .assistant, text: content)
+                if let outboundId = currentOutboundMessageId,
+                   let userIdx = messages.firstIndex(where: { $0.id == outboundId }) {
+                    messages.insert(bubble, at: min(userIdx + 1, messages.count))
+                    schedulePersistChatMessages()
+                } else {
+                    pushMessage(bubble)
+                }
             }
             clearStreamCursor(status: StreamingBubbleState.statusCompleted)
             endWaitingReply()
@@ -991,8 +1003,9 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     private func ensureAssistantBubble(text: String, messageId: Int?) {
-        if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
-            messages[idx].kind = .assistant
+        // 禁止把用户气泡「就地改成」助手，否则会把新回答写进旧位置，看起来像答在问上面。
+        if let messageId,
+           let idx = messages.firstIndex(where: { $0.id == messageId && $0.kind == .assistant }) {
             if messages[idx].text.isEmpty, !text.isEmpty {
                 messages[idx].text = text
             } else if !text.isEmpty, messages[idx].text.count < text.count {
@@ -1002,16 +1015,22 @@ final class EasyAccountViewModel: ObservableObject {
             streamingMsgId = messageId
             return
         }
-        if let sid = streamingMsgId, let idx = messages.firstIndex(where: { $0.id == sid }) {
+        if let sid = streamingMsgId,
+           let idx = messages.firstIndex(where: { $0.id == sid && $0.kind == .assistant }) {
             if messages[idx].text.isEmpty, !text.isEmpty {
                 messages[idx].text = text
             }
             messages[idx].streaming = true
             return
         }
-        // 找最后一条助手气泡复用（冷启动恢复）。
-        if let idx = messages.lastIndex(where: { $0.kind == .assistant }),
-           messages[idx].text == text || text.isEmpty || messages[idx].text.hasPrefix(text) || text.hasPrefix(messages[idx].text) {
+        // 冷启动恢复：仅在文案确实能对上时复用最后一条助手。
+        // 注意：text.isEmpty 时绝不能复用——409/续传常传空串，会误把「上一轮助手」当成本轮容器，
+        // 再叠加上传附件的时序，就会出现「回答出现在新问题上面」。
+        if !text.isEmpty,
+           let idx = messages.lastIndex(where: { $0.kind == .assistant }),
+           messages[idx].text == text
+            || messages[idx].text.hasPrefix(text)
+            || text.hasPrefix(messages[idx].text) {
             if messages[idx].text.count < text.count {
                 messages[idx].text = text
             }
@@ -1019,9 +1038,22 @@ final class EasyAccountViewModel: ObservableObject {
             streamingMsgId = messages[idx].id
             return
         }
+        insertAssistantBubble(text: text)
+    }
+
+    /// 在当前发出的用户消息之后插入助手气泡，保证问在上、答在下。
+    private func insertAssistantBubble(text: String) {
         let id = nextId()
         streamingMsgId = id
-        pushMessage(ChatMessage(id: id, kind: .assistant, text: text, streaming: true))
+        let bubble = ChatMessage(id: id, kind: .assistant, text: text, streaming: true)
+        if let outboundId = currentOutboundMessageId,
+           let userIdx = messages.firstIndex(where: { $0.id == outboundId }) {
+            let insertAt = min(userIdx + 1, messages.count)
+            messages.insert(bubble, at: insertAt)
+            schedulePersistChatMessages()
+        } else {
+            pushMessage(bubble)
+        }
     }
 
     private func forceToLogin(_ message: String) async {
