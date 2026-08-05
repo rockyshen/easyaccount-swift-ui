@@ -255,8 +255,7 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.interactively)
             // 即使内容不足一屏也允许回弹，短对话可轻微上划。
             .scrollBounceBehavior(.always)
-            // 重新打开时默认停在最新消息，而不是历史顶部。
-            .defaultScrollAnchor(.bottom)
+            .eaChatScrollAnchors()
             .onAppear {
                 scrollChatToBottom(proxy: proxy, animated: false)
             }
@@ -856,8 +855,7 @@ struct MessageBubble: View {
             }
         }
         .padding(.horizontal, message.attachmentJPEGs.isEmpty ? 14 : 10)
-        .padding(.vertical, message.attachmentJPEGs.isEmpty ? 10 : 10)
-        .frame(minWidth: showsUserTextBubble ? 0 : nil)
+        .padding(.vertical, 10)
         .frame(maxWidth: 280, alignment: .leading)
         .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
         .clipShape(shape)
