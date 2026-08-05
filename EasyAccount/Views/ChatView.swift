@@ -67,6 +67,11 @@ struct ChatView: View {
                     }
                     vm.addDraftImages([image])
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    // 选完一张即回到聊天页，便于继续打字或再点加号追加。
+                    showAttachMenu = false
+                    DispatchQueue.main.async {
+                        inputFocused = true
+                    }
                 },
                 onPhotos: {
                     showAttachMenu = false

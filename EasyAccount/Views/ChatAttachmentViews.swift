@@ -444,7 +444,7 @@ struct ChatAttachSheet: View {
     private func pickRecent(_ item: RecentPhotoItem) {
         guard pickingRecentId == nil else { return }
         pickingRecentId = item.id
-        Task {
+        Task { @MainActor in
             let image: UIImage
             if remainingSlots > 0 {
                 image = await recentLibrary.loadFullImage(for: item) ?? item.thumbnail
@@ -454,6 +454,8 @@ struct ChatAttachSheet: View {
             }
             onPickRecent(image)
             pickingRecentId = nil
+            // 与相册/拍照一致：选完收起 sheet，回到聊天输入。
+            isPresented = false
         }
     }
 }
