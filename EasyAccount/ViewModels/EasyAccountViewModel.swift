@@ -31,7 +31,7 @@ enum ManagementDestination: String, Identifiable, Equatable {
     var title: String {
         switch self {
         case .accounts: return "账户管理"
-        case .categories: return "分类管理"
+        case .categories: return "我的分类"
         case .dashboard: return "概览分析"
         case .scheduledTasks: return "定时任务"
         }
@@ -62,6 +62,8 @@ final class EasyAccountViewModel: ObservableObject {
     @Published var httpBase: String
 
     @Published var currentUser: AuthUser?
+    /// 注册/登录/me 下发的首次引导状态；旧后端为 nil。
+    @Published var onboarding: OnboardingDTO?
     /// 已登录可用（SSE 无长连接；用于侧栏「在线」与状态灯）。
     @Published var connected: Bool = false
     @Published var messages: [ChatMessage] = []
@@ -154,7 +156,15 @@ final class EasyAccountViewModel: ObservableObject {
     }
 
     var greetingLines: (String, String) {
-        ("Hi \(displayUserName)，", "今天想记点什么账？")
+        if needsOnboarding {
+            return ("Hi \(displayUserName)，", "先建个账户开始记账吧")
+        }
+        return ("Hi \(displayUserName)，", "今天想记点什么账？")
+    }
+
+    /// 当前没有活跃账户，需建账户后才能正常记账。
+    var needsOnboarding: Bool {
+        onboarding?.needsOnboarding == true
     }
 
     var headerSubtitle: String? {
@@ -438,6 +448,21 @@ final class EasyAccountViewModel: ObservableObject {
             managementDestination = nil
             showSideMenu = true
         }
+        // 侧栏建账户后刷新 onboarding，聊天轻提示可及时收起。
+        Task { await refreshOnboarding() }
+    }
+
+    /// 账户创建成功等场景主动刷新引导状态。
+    func refreshOnboarding() async {
+        guard !token.isEmpty else { return }
+        do {
+            let me = try await AuthService.fetchMe(httpBase: httpBase, token: token)
+            currentUser = me.user
+            onboarding = me.onboarding
+            SessionStore.persistSession(token: token, user: me.user)
+        } catch {
+            // 忽略瞬时失败；下次进管理页/启动时会再拉。
+        }
     }
 
     func handleUnauthorized(_ message: String) {
@@ -458,6 +483,7 @@ final class EasyAccountViewModel: ObservableObject {
         guard !stored.isEmpty else {
             stage = .login
             currentUser = nil
+            onboarding = nil
             connected = false
             return
         }
@@ -465,13 +491,15 @@ final class EasyAccountViewModel: ObservableObject {
         currentUser = SessionStore.getStoredUser()
         do {
             let me = try await AuthService.fetchMe(httpBase: httpBase, token: stored)
-            currentUser = me
-            SessionStore.persistSession(token: stored, user: me)
+            currentUser = me.user
+            onboarding = me.onboarding
+            SessionStore.persistSession(token: stored, user: me.user)
             enterLive()
         } catch let error as APIError where error.status == 401 {
             SessionStore.clearSession()
             token = ""
             currentUser = nil
+            onboarding = nil
             connected = false
             stage = .login
             authError = error.message
@@ -549,6 +577,7 @@ final class EasyAccountViewModel: ObservableObject {
         SessionStore.persistSession(token: data.token, user: data.user)
         token = data.token
         currentUser = data.user ?? AuthUser(id: nil, name: name)
+        onboarding = data.onboarding
         loginPassword = ""
         verifyCode = ""
         showPassword = false
@@ -556,6 +585,9 @@ final class EasyAccountViewModel: ObservableObject {
         showSideMenu = false
         resetChatState()
         enterLive()
+        if needsOnboarding {
+            showToast("先建一个账户才能记账，跟我说「建个微信，余额 200」也可以")
+        }
     }
 
     private func onLogout() async {
@@ -565,6 +597,7 @@ final class EasyAccountViewModel: ObservableObject {
         SessionStore.clearSession()
         token = ""
         currentUser = nil
+        onboarding = nil
         managementDestination = nil
         ManagementCache.clear()
         resetChatState()
@@ -771,6 +804,10 @@ final class EasyAccountViewModel: ObservableObject {
             endWaitingReply()
             persistChatMessagesNow()
             flushPendingOutbound()
+            // Agent 可能已通过对话建好账户，刷新后收起轻提示。
+            if needsOnboarding {
+                Task { await refreshOnboarding() }
+            }
         case .error(let message, let streamId, let eventId):
             applyStreamCursor(streamId: streamId, eventId: eventId)
             let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1206,6 +1243,7 @@ final class EasyAccountViewModel: ObservableObject {
         SessionStore.clearSession()
         token = ""
         currentUser = nil
+        onboarding = nil
         managementDestination = nil
         ManagementCache.clear()
         resetChatState()
