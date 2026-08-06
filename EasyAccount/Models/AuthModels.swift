@@ -6,6 +6,26 @@ struct OnboardingDTO: Codable, Equatable, Sendable {
     let hasAccounts: Bool
     let hasTypes: Bool
     let typesSeeded: Bool
+
+    init(
+        needsOnboarding: Bool,
+        hasAccounts: Bool,
+        hasTypes: Bool,
+        typesSeeded: Bool
+    ) {
+        self.needsOnboarding = needsOnboarding
+        self.hasAccounts = hasAccounts
+        self.hasTypes = hasTypes
+        self.typesSeeded = typesSeeded
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        needsOnboarding = try container.decodeIfPresent(Bool.self, forKey: .needsOnboarding) ?? false
+        hasAccounts = try container.decodeIfPresent(Bool.self, forKey: .hasAccounts) ?? false
+        hasTypes = try container.decodeIfPresent(Bool.self, forKey: .hasTypes) ?? false
+        typesSeeded = try container.decodeIfPresent(Bool.self, forKey: .typesSeeded) ?? hasTypes
+    }
 }
 
 struct AuthUser: Codable, Equatable, Identifiable {

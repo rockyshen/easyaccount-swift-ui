@@ -483,6 +483,7 @@ final class EasyAccountViewModel: ObservableObject {
         guard !stored.isEmpty else {
             stage = .login
             currentUser = nil
+            onboarding = nil
             connected = false
             return
         }
