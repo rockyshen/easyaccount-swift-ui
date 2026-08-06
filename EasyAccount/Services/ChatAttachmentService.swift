@@ -45,7 +45,7 @@ enum ChatAttachmentService {
             case 401: fallback = "未登录或会话已失效"
             case 413: fallback = "图片过大"
             case 415: fallback = "不支持的文件类型"
-            default: fallback = errorBody?.message ?? "上传失败（\(status））"
+            default: fallback = errorBody?.message ?? "上传失败（\(status)）"
             }
             throw APIError(status: status, message: errorBody?.message ?? fallback)
         }
@@ -113,7 +113,7 @@ enum ChatAttachmentService {
             let errorBody = try? JSONDecoder().decode(AuthErrorBody.self, from: data)
             throw APIError(
                 status: status,
-                message: errorBody?.message ?? (status == 404 ? "附件不存在或已过期" : "获取附件失败（\(status））")
+                message: errorBody?.message ?? (status == 404 ? "附件不存在或已过期" : "获取附件失败（\(status)）")
             )
         }
         return try JSONDecoder().decode(ChatAttachmentDTO.self, from: data)
@@ -139,7 +139,7 @@ enum ChatAttachmentService {
             let errorBody = try? JSONDecoder().decode(AuthErrorBody.self, from: data)
             throw APIError(
                 status: status,
-                message: errorBody?.message ?? "下载附件失败（\(status））"
+                message: errorBody?.message ?? "下载附件失败（\(status)）"
             )
         }
         guard !data.isEmpty else {
