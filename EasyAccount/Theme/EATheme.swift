@@ -30,17 +30,28 @@ enum EATheme {
         light: rgb(245, 246, 250),
         dark: rgb(10, 12, 18)
     )
+    /// 卡片 / 输入条等基础表面；暗色略抬亮，与背景拉开层次。
     static let surface = dynamic(
         light: rgb(255, 255, 255),
-        dark: rgb(22, 24, 32)
+        dark: rgb(28, 30, 40)
     )
     static let surfaceElevated = dynamic(
         light: rgb(236, 238, 245),
-        dark: rgb(32, 34, 44)
+        dark: rgb(44, 46, 58)
+    )
+    /// 助手气泡：浅色保持白底；暗色再用一级抬升，避免贴背景。
+    static let assistantBubble = dynamic(
+        light: rgb(255, 255, 255),
+        dark: rgb(48, 50, 64)
+    )
+    /// 暗色下细描边强化气泡边界；浅色几乎不可见。
+    static let assistantBubbleStroke = dynamic(
+        light: UIColor(white: 0, alpha: 0.04),
+        dark: UIColor(white: 1, alpha: 0.10)
     )
     static let inputFill = dynamic(
         light: rgb(240, 242, 247),
-        dark: rgb(28, 30, 40)
+        dark: rgb(36, 38, 48)
     )
     static let label = dynamic(
         light: rgb(28, 28, 30),

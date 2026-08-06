@@ -801,7 +801,7 @@ struct MessageBubble: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(EATheme.surface)
+            .background(EATheme.assistantBubble)
             .clipShape(
                 UnevenRoundedRectangle(
                     topLeadingRadius: 18,
@@ -811,6 +811,16 @@ struct MessageBubble: View {
                     style: .continuous
                 )
             )
+            .overlay {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 18,
+                    bottomLeadingRadius: 6,
+                    bottomTrailingRadius: 18,
+                    topTrailingRadius: 18,
+                    style: .continuous
+                )
+                .strokeBorder(EATheme.assistantBubbleStroke, lineWidth: 1)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, 40)
 
