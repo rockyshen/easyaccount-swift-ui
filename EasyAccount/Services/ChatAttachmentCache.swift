@@ -63,6 +63,37 @@ enum ChatAttachmentCache {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// 删除超过保留期的本地 thumb/original（按文件修改时间）。
+    /// - Returns: 删除的文件数。
+    @discardableResult
+    static func purgeExpired(
+        userId: String,
+        olderThan maxAge: TimeInterval = ChatAttachmentLimits.localCacheMaxAge
+    ) -> Int {
+        guard maxAge > 0 else { return 0 }
+        let cutoff = Date().addingTimeInterval(-maxAge)
+        let fm = FileManager.default
+        var removed = 0
+        for variant in ["thumb", "original"] {
+            let dir = variantDirectory(userId: userId, variant: variant)
+            guard let files = try? fm.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for url in files where url.pathExtension.lowercased() == "jpg" {
+                let modified =
+                    (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate
+                    ?? (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+                guard let modified, modified < cutoff else { continue }
+                try? fm.removeItem(at: url)
+                removed += 1
+            }
+        }
+        return removed
+    }
+
     // MARK: - Paths
 
     private static func thumbnailURL(userId: String, id: String) -> URL {

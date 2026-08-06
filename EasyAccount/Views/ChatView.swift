@@ -907,37 +907,12 @@ struct MessageBubble: View {
     }
 
     private func userAttachmentThumbnail(_ attachment: ChatMessageAttachment, size: CGFloat) -> some View {
-        Button {
-            openAttachmentPreview(attachment)
-        } label: {
-            ZStack {
-                if let image = vm.thumbnailImage(for: attachment) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size, height: size)
-                        .clipped()
-                } else {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: size, height: size)
-                        .overlay {
-                            Image(systemName: "photo")
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                }
-
-                if previewLoadingId == attachment.id {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.28))
-                        .frame(width: size, height: size)
-                    ProgressView()
-                        .tint(.white)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
+        UserAttachmentThumbnailView(
+            attachment: attachment,
+            size: size,
+            isPreviewLoading: previewLoadingId == attachment.id,
+            onTap: { openAttachmentPreview(attachment) }
+        )
         .disabled(previewLoadingId != nil)
     }
 
@@ -954,6 +929,57 @@ struct MessageBubble: View {
                     vm.showToast("无法打开图片")
                 }
             }
+        }
+    }
+}
+
+/// 列表缩略图：本地命中直接显示；被 30 天清理后按 remoteId 向服务端补拉。
+private struct UserAttachmentThumbnailView: View {
+    @EnvironmentObject private var vm: EasyAccountViewModel
+    let attachment: ChatMessageAttachment
+    let size: CGFloat
+    var isPreviewLoading: Bool
+    var onTap: () -> Void
+
+    @State private var image: UIImage?
+    @State private var loadingRemote = false
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipped()
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: size, height: size)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                }
+
+                if isPreviewLoading || loadingRemote {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.28))
+                        .frame(width: size, height: size)
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .task(id: attachment.id) {
+            image = vm.thumbnailImage(for: attachment)
+            guard image == nil else { return }
+            loadingRemote = true
+            image = await vm.ensureThumbnailImage(for: attachment)
+            loadingRemote = false
         }
     }
 }

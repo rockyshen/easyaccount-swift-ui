@@ -315,6 +315,32 @@ final class EasyAccountViewModel: ObservableObject {
         return nil
     }
 
+    /// 本地无缩略图时，按 remoteId 从服务端补拉并写回磁盘缓存。
+    func ensureThumbnailImage(for attachment: ChatMessageAttachment) async -> UIImage? {
+        if let local = thumbnailImage(for: attachment) {
+            return local
+        }
+        let remoteId = remoteAttachmentId(for: attachment)
+        guard let remoteId, !token.isEmpty else { return nil }
+
+        do {
+            let data = try await ChatAttachmentService.fetchContent(
+                httpBase: httpBase,
+                token: token,
+                attachmentId: remoteId,
+                variant: .thumbnail
+            )
+            let userId = chatStorageUserId
+            ChatAttachmentCache.saveThumbnail(userId: userId, id: remoteId, jpegData: data)
+            if attachment.id != remoteId {
+                ChatAttachmentCache.saveThumbnail(userId: userId, id: attachment.id, jpegData: data)
+            }
+            return UIImage(data: data) ?? ChatAttachmentCache.loadThumbnailImage(userId: userId, id: remoteId)
+        } catch {
+            return nil
+        }
+    }
+
     /// 点按预览：本地原图缓存 → 服务端 original → 缩略图兜底。
     func loadPreviewImage(for attachment: ChatMessageAttachment) async -> UIImage? {
         let userId = chatStorageUserId
@@ -326,13 +352,8 @@ final class EasyAccountViewModel: ObservableObject {
             return image
         }
 
-        let remoteId = (attachment.remoteId ?? attachment.id)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !remoteId.isEmpty, !remoteId.hasPrefix("local_"), !remoteId.hasPrefix("migrated_") else {
-            return thumbnailImage(for: attachment)
-        }
-        guard !token.isEmpty else {
-            return thumbnailImage(for: attachment)
+        guard let remoteId = remoteAttachmentId(for: attachment), !token.isEmpty else {
+            return await ensureThumbnailImage(for: attachment) ?? thumbnailImage(for: attachment)
         }
 
         do {
@@ -348,8 +369,17 @@ final class EasyAccountViewModel: ObservableObject {
             }
             return UIImage(data: data) ?? thumbnailImage(for: attachment)
         } catch {
-            return thumbnailImage(for: attachment)
+            return await ensureThumbnailImage(for: attachment) ?? thumbnailImage(for: attachment)
         }
+    }
+
+    private func remoteAttachmentId(for attachment: ChatMessageAttachment) -> String? {
+        let remoteId = (attachment.remoteId ?? attachment.id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remoteId.isEmpty,
+              !remoteId.hasPrefix("local_"),
+              !remoteId.hasPrefix("migrated_") else { return nil }
+        return remoteId
     }
 
     func addDraftImages(_ images: [UIImage]) {
@@ -549,6 +579,11 @@ final class EasyAccountViewModel: ObservableObject {
         stage = .live
         restoreChatMessagesIfNeeded()
         resumeIncompleteStreamIfNeeded()
+        // 后台清理超过 30 天的本地附件缓存；会话文字仍保留，缺图时按 remoteId 再拉。
+        let userId = chatStorageUserId
+        Task.detached(priority: .utility) {
+            ChatAttachmentCache.purgeExpired(userId: userId)
+        }
     }
 
     // MARK: - SSE chat

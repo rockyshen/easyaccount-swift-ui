@@ -13,6 +13,11 @@ enum ChatAttachmentLimits {
     /// 对话列表缩略图（仅本地磁盘缓存，不进 messages 内存）。
     static let thumbnailMaxPixel: CGFloat = 256
     static let thumbnailJpegQuality: CGFloat = 0.72
+    /// 本地缩略图/原图缓存保留时长；超时删除后可按 remoteId 再从服务端拉取。
+    static let localCacheMaxAgeDays: Int = 30
+    static var localCacheMaxAge: TimeInterval {
+        TimeInterval(localCacheMaxAgeDays * 24 * 60 * 60)
+    }
 }
 
 /// PhotosPicker → UIImage（Data 直接 Transferable 在部分系统上不稳定）。

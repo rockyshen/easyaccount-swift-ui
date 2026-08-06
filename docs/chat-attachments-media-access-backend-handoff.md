@@ -222,7 +222,8 @@ iOS 在 `/content` 返回 404/405 时会回退使用这里的 `url` / `thumbnail
   3) POST /api/chat { content, attachmentIds } → SSE
 
 列表展示：
-  只读本地 thumb 缓存（不访问网络）
+  1) 优先读本地 thumb 缓存
+  2) 本地被 30 天策略清理后：GET .../content?variant=thumbnail 补拉并写回缓存
 
 点按预览：
   1) 本地 original 缓存命中 → 直接显示
@@ -230,6 +231,14 @@ iOS 在 `/content` 返回 404/405 时会回退使用这里的 `url` / `thumbnail
   3) 写入本地 original 缓存后显示
   4) /content 不可用 → GET 元数据 url → 下载
 ```
+
+### 客户端本地缓存策略
+
+| 项 | 策略 |
+|----|------|
+| 缩略图 / 原图本地文件 | 按文件修改时间保留 **30 天**，进入聊天页时后台清理 |
+| 会话文字清单 | 本地仍可保留（与附件缓存生命周期解耦） |
+| 清理后再次展示 | 依赖服务端长期保留 + `/content?variant=thumbnail\|original` |
 
 ---
 

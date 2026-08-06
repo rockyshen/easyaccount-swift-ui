@@ -99,8 +99,9 @@ enum ChatAttachmentService {
         attachmentId: String
     ) async throws -> ChatAttachmentDTO {
         let id = attachmentId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let base = APIClient.stripTrailingSlash(httpBase)
-        guard let url = URL(string: "\(base)/api/chat/attachments/\(id)") else {
+        guard let url = URL(string: "\(base)/api/chat/attachments/\(encodedId)") else {
             throw APIError(status: -1, message: "无效的服务地址")
         }
         var request = URLRequest(url: url, timeoutInterval: 60)
