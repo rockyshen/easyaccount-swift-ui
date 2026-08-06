@@ -67,6 +67,11 @@ struct ChatView: View {
                     }
                     vm.addDraftImages([image])
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    // 选完一张即回到聊天页，便于继续打字或再点加号追加。
+                    showAttachMenu = false
+                    DispatchQueue.main.async {
+                        inputFocused = true
+                    }
                 },
                 onPhotos: {
                     showAttachMenu = false
@@ -740,10 +745,12 @@ struct VoiceSoundWaveView: View {
 }
 
 struct MessageBubble: View {
+    @EnvironmentObject private var vm: EasyAccountViewModel
     let message: ChatMessage
     var onUserShortTap: (() -> Void)? = nil
     var onUserLongPressCopy: (() -> Void)? = nil
     @State private var previewImage: UIImage?
+    @State private var previewLoadingId: String?
 
     var body: some View {
         bubbleContent
@@ -764,7 +771,7 @@ struct MessageBubble: View {
     private var showsUserTextBubble: Bool {
         let text = message.text
         guard !text.isEmpty else { return false }
-        if text == "【图片】", !message.attachmentJPEGs.isEmpty { return false }
+        if text == "【图片】", !message.attachments.isEmpty { return false }
         return true
     }
 
@@ -794,7 +801,7 @@ struct MessageBubble: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(EATheme.surface)
+            .background(EATheme.assistantBubble)
             .clipShape(
                 UnevenRoundedRectangle(
                     topLeadingRadius: 18,
@@ -804,6 +811,16 @@ struct MessageBubble: View {
                     style: .continuous
                 )
             )
+            .overlay {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 18,
+                    bottomLeadingRadius: 6,
+                    bottomTrailingRadius: 18,
+                    topTrailingRadius: 18,
+                    style: .continuous
+                )
+                .strokeBorder(EATheme.assistantBubbleStroke, lineWidth: 1)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, 40)
 
@@ -856,58 +873,123 @@ struct MessageBubble: View {
         )
 
         return VStack(alignment: .leading, spacing: 8) {
-            if !message.attachmentJPEGs.isEmpty {
-                userAttachmentStrip(message.attachmentJPEGs)
+            if !message.attachments.isEmpty {
+                userAttachmentStrip(message.attachments)
             }
 
             if showsUserTextBubble {
                 Text(message.text)
                     .font(.system(size: 16))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 252, alignment: .leading)
             }
         }
-        .padding(.horizontal, message.attachmentJPEGs.isEmpty ? 14 : 10)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 280, alignment: .leading)
+        .padding(.horizontal, message.attachments.isEmpty ? 14 : 10)
+        .padding(.vertical, message.attachments.isEmpty ? 10 : 8)
         .background(EATheme.blue.opacity(message.pending ? 0.72 : 1))
         .clipShape(shape)
         .contentShape(shape)
     }
 
+    /// 对话内只渲染本地缩略图；点按再异步拉原图（本地缓存优先，否则请求服务端）。
     @ViewBuilder
-    private func userAttachmentStrip(_ jpegs: [Data]) -> some View {
-        let images = jpegs.compactMap { UIImage(data: $0) }
-        if images.count == 1, let image = images.first {
-            Button {
-                previewImage = image
-            } label: {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 168)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        } else if !images.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { _, image in
-                        Button {
-                            previewImage = image
-                        } label: {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 96, height: 96)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func userAttachmentStrip(_ attachments: [ChatMessageAttachment]) -> some View {
+        let thumb: CGFloat = 72
+        if !attachments.isEmpty {
+            Group {
+                if attachments.count <= 3 {
+                    HStack(spacing: 6) {
+                        ForEach(attachments) { attachment in
+                            userAttachmentThumbnail(attachment, size: thumb)
                         }
-                        .buttonStyle(.plain)
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(attachments) { attachment in
+                                userAttachmentThumbnail(attachment, size: thumb)
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private func userAttachmentThumbnail(_ attachment: ChatMessageAttachment, size: CGFloat) -> some View {
+        UserAttachmentThumbnailView(
+            attachment: attachment,
+            size: size,
+            isPreviewLoading: previewLoadingId == attachment.id,
+            onTap: { openAttachmentPreview(attachment) }
+        )
+        .disabled(previewLoadingId != nil)
+    }
+
+    private func openAttachmentPreview(_ attachment: ChatMessageAttachment) {
+        guard previewLoadingId == nil else { return }
+        previewLoadingId = attachment.id
+        Task {
+            let image = await vm.loadPreviewImage(for: attachment)
+            await MainActor.run {
+                previewLoadingId = nil
+                if let image {
+                    previewImage = image
+                } else {
+                    vm.showToast("无法打开图片")
+                }
+            }
+        }
+    }
+}
+
+/// 列表缩略图：本地命中直接显示；被 30 天清理后按 remoteId 向服务端补拉。
+private struct UserAttachmentThumbnailView: View {
+    @EnvironmentObject private var vm: EasyAccountViewModel
+    let attachment: ChatMessageAttachment
+    let size: CGFloat
+    var isPreviewLoading: Bool
+    var onTap: () -> Void
+
+    @State private var image: UIImage?
+    @State private var loadingRemote = false
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipped()
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: size, height: size)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                }
+
+                if isPreviewLoading || loadingRemote {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.28))
+                        .frame(width: size, height: size)
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .task(id: attachment.id) {
+            image = vm.thumbnailImage(for: attachment)
+            guard image == nil else { return }
+            loadingRemote = true
+            image = await vm.ensureThumbnailImage(for: attachment)
+            loadingRemote = false
         }
     }
 }

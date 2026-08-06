@@ -7,8 +7,17 @@ import UIKit
 
 enum ChatAttachmentLimits {
     static let maxCount = 9
+    /// 上传 / 本地原图缓存最长边。
     static let maxPixel: CGFloat = 1600
     static let jpegQuality: CGFloat = 0.78
+    /// 对话列表缩略图（仅本地磁盘缓存，不进 messages 内存）。
+    static let thumbnailMaxPixel: CGFloat = 256
+    static let thumbnailJpegQuality: CGFloat = 0.72
+    /// 本地缩略图/原图缓存保留时长；超时删除后可按 remoteId 再从服务端拉取。
+    static let localCacheMaxAgeDays: Int = 30
+    static var localCacheMaxAge: TimeInterval {
+        TimeInterval(localCacheMaxAgeDays * 24 * 60 * 60)
+    }
 }
 
 /// PhotosPicker → UIImage（Data 直接 Transferable 在部分系统上不稳定）。
@@ -444,7 +453,7 @@ struct ChatAttachSheet: View {
     private func pickRecent(_ item: RecentPhotoItem) {
         guard pickingRecentId == nil else { return }
         pickingRecentId = item.id
-        Task {
+        Task { @MainActor in
             let image: UIImage
             if remainingSlots > 0 {
                 image = await recentLibrary.loadFullImage(for: item) ?? item.thumbnail
@@ -454,6 +463,8 @@ struct ChatAttachSheet: View {
             }
             onPickRecent(image)
             pickingRecentId = nil
+            // 与相册/拍照一致：选完收起 sheet，回到聊天输入。
+            isPresented = false
         }
     }
 }
