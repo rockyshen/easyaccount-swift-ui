@@ -1134,7 +1134,12 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func pushMessage(_ message: ChatMessage) {
         messages.append(message)
-        schedulePersistChatMessages()
+        // 带附件的用户消息立即落盘，避免 350ms 防抖窗口内杀进程导致重启丢图。
+        if !message.attachmentJPEGs.isEmpty {
+            persistChatMessagesNow()
+        } else {
+            schedulePersistChatMessages()
+        }
     }
 
     private func nextId() -> Int {

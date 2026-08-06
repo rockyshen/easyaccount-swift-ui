@@ -15,7 +15,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var streaming: Bool = false
     /// 已展示在对话中，等待上一轮 SSE 结束后再真正发往服务端。
     var pending: Bool = false
-    /// 本地附件 JPEG（仅会话内展示；编码时忽略，不写入持久化）。
+    /// 本地附件 JPEG（气泡缩略图）；SessionStore 旁路落盘，重启后回填。
     var attachmentJPEGs: [Data] = []
 
     enum CodingKeys: String, CodingKey {
@@ -38,7 +38,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         self.attachmentJPEGs = attachmentJPEGs
     }
 
-    /// 附件 Data 不参与相等判断，避免大图导致 diff 过重 / 列表异常刷新。
+    /// 附件 Data 不参与字节级相等判断，避免大图导致 diff 过重 / 列表异常刷新。
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
         lhs.id == rhs.id
             && lhs.kind == rhs.kind
@@ -55,6 +55,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         text = try container.decode(String.self, forKey: .text)
         streaming = try container.decodeIfPresent(Bool.self, forKey: .streaming) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        // 旧 UserDefaults JSON 无附件字段；磁盘回填见 SessionStore。
         attachmentJPEGs = []
     }
 
