@@ -27,11 +27,20 @@ struct ChatView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var previewImage: UIImage?
 
-    private let suggestions = [
-        "今天午饭花了 35 元",
-        "列出我的账户",
-        "本月支出概况"
-    ]
+    private var suggestions: [String] {
+        if vm.needsOnboarding {
+            return [
+                "建个微信，余额 200",
+                "建个招行信用卡",
+                "我有哪些分类"
+            ]
+        }
+        return [
+            "今天午饭花了 35 元",
+            "列出我的账户",
+            "本月支出概况"
+        ]
+    }
 
     /// 顶部玻璃栏内容区高度（不含状态栏），用于给滚动内容留出起始间距。
     private let chatHeaderContentHeight: CGFloat = 52
@@ -53,7 +62,12 @@ struct ChatView: View {
             chatHeader
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer
+            VStack(spacing: 0) {
+                if vm.needsOnboarding {
+                    onboardingHintBar
+                }
+                composer
+            }
         }
         .background(EATheme.background.ignoresSafeArea())
         .sheet(isPresented: $showAttachMenu) {
@@ -196,7 +210,11 @@ struct ChatView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
-                Text("可以说收支、查余额，或让我帮你整理账本")
+                Text(
+                    vm.needsOnboarding
+                        ? "先和助手聊聊建个账户，建好后就可以记账了"
+                        : "可以说收支、查余额，或让我帮你整理账本"
+                )
                     .font(.system(size: 14))
                     .foregroundStyle(EATheme.secondary)
                     .multilineTextAlignment(.center)
@@ -312,6 +330,29 @@ struct ChatView: View {
     /// 仅手指按住时展示录制 UI；松手后的续录/出最终结果在后台进行。
     private var isVoiceCaptureActive: Bool {
         isHoldPressing
+    }
+
+    /// 无账户时的轻提示（非全屏向导）；建账户后随 onboarding 刷新自动消失。
+    private var onboardingHintBar: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(EATheme.cyan)
+                .padding(.top, 2)
+            Text("先建一个账户才能记账，跟我说「建个微信，余额 200」也可以。")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(EATheme.label)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(EATheme.surfaceElevated.opacity(0.92))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(EATheme.surface)
+                .frame(height: 1)
+        }
     }
 
     private var composer: some View {

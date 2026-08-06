@@ -5,7 +5,7 @@ struct SideMenuView: View {
 
     private let menuItems: [(icon: String, title: String, destination: ManagementDestination)] = [
         ("creditcard", "账户管理", .accounts),
-        ("square.grid.2x2", "分类管理", .categories),
+        ("square.grid.2x2", "我的分类", .categories),
         ("chart.pie", "概览分析", .dashboard),
         ("clock.arrow.circlepath", "定时任务", .scheduledTasks),
     ]

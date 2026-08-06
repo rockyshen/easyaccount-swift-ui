@@ -1,5 +1,13 @@
 import Foundation
 
+/// 首次引导状态（register / login / me）；旧后端可无此字段。
+struct OnboardingDTO: Codable, Equatable, Sendable {
+    let needsOnboarding: Bool
+    let hasAccounts: Bool
+    let hasTypes: Bool
+    let typesSeeded: Bool
+}
+
 struct AuthUser: Codable, Equatable, Identifiable {
     var id: String?
     var name: String?
@@ -39,6 +47,36 @@ struct AuthUser: Codable, Equatable, Identifiable {
 struct AuthSessionResponse: Codable {
     let token: String
     let user: AuthUser?
+    /// 旧构建 / 未部署环境可能缺省。
+    let onboarding: OnboardingDTO?
+}
+
+/// `GET /api/auth/me`：用户字段与 onboarding 平铺在同一对象。
+struct AuthMeResponse: Codable {
+    var id: String?
+    var name: String?
+    var onboarding: OnboardingDTO?
+
+    var user: AuthUser {
+        AuthUser(id: id, name: name)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, onboarding
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let stringId = try? container.decodeIfPresent(String.self, forKey: .id) {
+            id = stringId
+        } else if let intId = try? container.decodeIfPresent(Int.self, forKey: .id) {
+            id = String(intId)
+        } else {
+            id = nil
+        }
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        onboarding = try container.decodeIfPresent(OnboardingDTO.self, forKey: .onboarding)
+    }
 }
 
 struct AuthErrorBody: Codable {

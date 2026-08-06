@@ -21,7 +21,7 @@ enum AuthService {
         try await postAuth(path: "/api/auth/register", httpBase: httpBase, name: name, password: password, fallback: "注册失败")
     }
 
-    static func fetchMe(httpBase: String, token: String) async throws -> AuthUser {
+    static func fetchMe(httpBase: String, token: String) async throws -> AuthMeResponse {
         guard let url = URL(string: "\(stripTrailingSlash(httpBase))/api/auth/me") else {
             throw APIError(status: -1, message: "无效的服务地址")
         }
@@ -35,7 +35,7 @@ enum AuthService {
             let body = try? JSONDecoder().decode(AuthErrorBody.self, from: data)
             throw APIError(status: status, message: body?.message ?? "未登录或会话已失效")
         }
-        return try JSONDecoder().decode(AuthUser.self, from: data)
+        return try JSONDecoder().decode(AuthMeResponse.self, from: data)
     }
 
     static func logout(httpBase: String, token: String) async {
