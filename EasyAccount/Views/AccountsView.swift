@@ -12,17 +12,20 @@ final class AccountsViewModel: ObservableObject {
     private let token: () -> String
     private let onUnauthorized: (String) -> Void
     private let onToast: (String) -> Void
+    private let onAccountsChanged: (() -> Void)?
 
     init(
         httpBase: @escaping () -> String,
         token: @escaping () -> String,
         onUnauthorized: @escaping (String) -> Void,
-        onToast: @escaping (String) -> Void
+        onToast: @escaping (String) -> Void,
+        onAccountsChanged: (() -> Void)? = nil
     ) {
         self.httpBase = httpBase
         self.token = token
         self.onUnauthorized = onUnauthorized
         self.onToast = onToast
+        self.onAccountsChanged = onAccountsChanged
     }
 
     func load(force: Bool = false) async {
@@ -115,6 +118,7 @@ final class AccountsViewModel: ObservableObject {
                 ManagementCache.upsertAccount(created)
                 accounts = ManagementCache.accounts
                 onToast("账户已创建")
+                onAccountsChanged?()
             case .edit(let account):
                 var exemptMoney: String?
                 let amountRaw = editor.amountText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -234,7 +238,10 @@ struct AccountsView: View {
             httpBase: { appVM.httpBase },
             token: { SessionStore.getStoredToken() },
             onUnauthorized: { appVM.handleUnauthorized($0) },
-            onToast: { appVM.showToast($0) }
+            onToast: { appVM.showToast($0) },
+            onAccountsChanged: {
+                Task { await appVM.refreshOnboarding() }
+            }
         ))
     }
 
@@ -321,9 +328,10 @@ struct AccountsView: View {
             Text("还没有账户")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(EATheme.label)
-            Text("创建一个储蓄账户或信用卡开始记账")
+            Text("去和助手聊聊，或点右上角新建。跟助手说「建个微信，余额 200」也可以。")
                 .font(.system(size: 14))
                 .foregroundStyle(EATheme.secondary)
+                .multilineTextAlignment(.center)
             Button("新建账户") { vm.openCreate() }
                 .buttonStyle(PressableButtonStyle())
                 .padding(.horizontal, 18)

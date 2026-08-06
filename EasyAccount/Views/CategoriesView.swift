@@ -247,7 +247,7 @@ struct CategoriesView: View {
                 }
             }
             .background(EATheme.background.ignoresSafeArea())
-            .navigationTitle("分类管理")
+            .navigationTitle("我的分类")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(true)
             .toolbar {
@@ -288,9 +288,11 @@ struct CategoriesView: View {
                 Text("暂无分类")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(EATheme.label)
-                Text("还没有分类数据")
+                Text("这些分类只属于你，可随意增删改")
                     .font(.system(size: 13))
                     .foregroundStyle(EATheme.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
                 Button("新建分类") { vm.openCreate() }
                     .buttonStyle(PressableButtonStyle())
                     .padding(.horizontal, 18)
@@ -302,31 +304,40 @@ struct CategoriesView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
-                ForEach(vm.flatRows) { row in
-                    Text(row.node.tName)
-                        .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
-                        .foregroundStyle(EATheme.label)
-                        .padding(.leading, CGFloat(row.depth) * 16)
-                        .padding(.vertical, 2)
-                        .listRowBackground(EATheme.surface)
-                        .listRowSeparatorTint(EATheme.surfaceElevated)
-                        // 右划 → 编辑
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button {
-                                vm.openEdit(row.node)
-                            } label: {
-                                Label("编辑", systemImage: "pencil")
+                Section {
+                    Text("这些分类只属于你，可随意增删改")
+                        .font(.system(size: 13))
+                        .foregroundStyle(EATheme.secondary)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                Section {
+                    ForEach(vm.flatRows) { row in
+                        Text(row.node.tName)
+                            .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
+                            .foregroundStyle(EATheme.label)
+                            .padding(.leading, CGFloat(row.depth) * 16)
+                            .padding(.vertical, 2)
+                            .listRowBackground(EATheme.surface)
+                            .listRowSeparatorTint(EATheme.surfaceElevated)
+                            // 右划 → 编辑
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button {
+                                    vm.openEdit(row.node)
+                                } label: {
+                                    Label("编辑", systemImage: "pencil")
+                                }
+                                .tint(EATheme.blue)
                             }
-                            .tint(EATheme.blue)
-                        }
-                        // 左划 → 删除
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                Task { await vm.delete(row.node) }
-                            } label: {
-                                Label("删除", systemImage: "trash")
+                            // 左划 → 删除
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { await vm.delete(row.node) }
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
                             }
-                        }
+                    }
                 }
             }
             .listStyle(.insetGrouped)
