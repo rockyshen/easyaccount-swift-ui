@@ -7,7 +7,7 @@ enum SessionStore {
     private static let chatMessagesKeyPrefix = "easyaccount_chat_messages_"
     private static let streamingBubbleKeyPrefix = "easyaccount_streaming_bubble_"
 
-    /// 会话清单 + 附件 JPEG 旁路目录（避免把大图塞进 UserDefaults）。
+    /// 会话文字清单目录（附件二进制在 ChatAttachmentCache）。
     private static let chatTranscriptFolder = "EasyAccount/ChatTranscripts"
 
     static func getStoredToken() -> String {
@@ -55,31 +55,15 @@ enum SessionStore {
             return
         }
 
-        var records: [PersistedChatMessage] = []
-        var keptFiles = Set<String>()
-        records.reserveCapacity(messages.count)
-
-        for message in messages {
-            var fileNames: [String] = []
-            fileNames.reserveCapacity(message.attachmentJPEGs.count)
-            for (index, jpeg) in message.attachmentJPEGs.enumerated() {
-                let name = attachmentFileName(messageId: message.id, index: index)
-                let url = dir.appendingPathComponent(name)
-                // 消息附件发送后不变：已有文件则跳过，避免流式落盘反复写大图。
-                if !FileManager.default.fileExists(atPath: url.path) {
-                    guard (try? jpeg.write(to: url, options: .atomic)) != nil else { continue }
+        let records: [PersistedChatMessage] = messages.map { message in
+            PersistedChatMessage(
+                id: message.id,
+                kind: message.kind,
+                text: message.text,
+                pending: message.pending,
+                attachments: message.attachments.map {
+                    PersistedAttachmentRef(id: $0.id, remoteId: $0.remoteId)
                 }
-                fileNames.append(name)
-                keptFiles.insert(name)
-            }
-            records.append(
-                PersistedChatMessage(
-                    id: message.id,
-                    kind: message.kind,
-                    text: message.text,
-                    pending: message.pending,
-                    attachmentFiles: fileNames
-                )
             )
         }
 
@@ -87,14 +71,13 @@ enum SessionStore {
         guard let data = try? JSONEncoder().encode(records) else { return }
         try? data.write(to: manifestURL, options: .atomic)
 
-        // 清理已删除消息留下的孤儿附件。
+        // 清理旧版旁路大图文件名（att_{msg}_{i}.jpg），缩略图已迁到 AttachmentCache。
         if let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
-            for name in names where name.hasPrefix("att_") && name.hasSuffix(".jpg") && !keptFiles.contains(name) {
+            for name in names where name.hasPrefix("att_") && name.hasSuffix(".jpg") {
                 try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
             }
         }
 
-        // 旧版只存文字的 UserDefaults 记录作废，避免恢复时读到无附件副本。
         UserDefaults.standard.removeObject(forKey: chatMessagesKey(userId))
     }
 
@@ -104,21 +87,19 @@ enum SessionStore {
         if let data = try? Data(contentsOf: manifestURL),
            let records = try? JSONDecoder().decode([PersistedChatMessage].self, from: data) {
             return records.map { record in
-                let jpegs: [Data] = record.attachmentFiles.compactMap { name in
-                    try? Data(contentsOf: dir.appendingPathComponent(name))
-                }
+                let attachments = migrateAttachmentsIfNeeded(record: record, userId: userId, dir: dir)
                 return ChatMessage(
                     id: record.id,
                     kind: record.kind,
                     text: record.text,
                     streaming: false,
                     pending: record.pending,
-                    attachmentJPEGs: jpegs
+                    attachments: attachments
                 )
             }
         }
 
-        // 兼容：迁移旧 UserDefaults 纯文字会话（无附件）。
+        // 兼容：迁移旧 UserDefaults 纯文字会话。
         let key = chatMessagesKey(userId)
         guard let data = UserDefaults.standard.data(forKey: key),
               let list = try? JSONDecoder().decode([ChatMessage].self, from: data) else {
@@ -131,7 +112,7 @@ enum SessionStore {
                 text: $0.text,
                 streaming: false,
                 pending: $0.pending,
-                attachmentJPEGs: []
+                attachments: []
             )
         }
         if !migrated.isEmpty {
@@ -144,6 +125,7 @@ enum SessionStore {
         UserDefaults.standard.removeObject(forKey: chatMessagesKey(userId))
         let dir = chatTranscriptDirectory(userId: userId)
         try? FileManager.default.removeItem(at: dir)
+        ChatAttachmentCache.clearAll(userId: userId)
         clearStreamingBubble(userId: userId)
     }
 
@@ -172,7 +154,7 @@ enum SessionStore {
         UserDefaults.standard.removeObject(forKey: streamingBubbleKey(userId))
     }
 
-    // MARK: - Paths
+    // MARK: - Paths / migration
 
     private static func chatMessagesKey(_ userId: String) -> String {
         let safe = userId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -199,25 +181,55 @@ enum SessionStore {
             .appendingPathComponent(sanitizedUserId(userId), isDirectory: true)
     }
 
-    private static func attachmentFileName(messageId: Int, index: Int) -> String {
-        "att_\(messageId)_\(index).jpg"
+    /// 新清单用 attachments；旧清单 attachmentFiles 为大图旁路，迁移进缩略图/原图缓存。
+    private static func migrateAttachmentsIfNeeded(
+        record: PersistedChatMessage,
+        userId: String,
+        dir: URL
+    ) -> [ChatMessageAttachment] {
+        if let attachments = record.attachments, !attachments.isEmpty {
+            return attachments.map {
+                ChatMessageAttachment(id: $0.id, remoteId: $0.remoteId)
+            }
+        }
+        guard let files = record.attachmentFiles, !files.isEmpty else { return [] }
+        var migrated: [ChatMessageAttachment] = []
+        for (index, name) in files.enumerated() {
+            let url = dir.appendingPathComponent(name)
+            guard let jpeg = try? Data(contentsOf: url), !jpeg.isEmpty else { continue }
+            let localId = "migrated_\(record.id)_\(index)"
+            ChatAttachmentCache.saveOriginal(userId: userId, id: localId, jpegData: jpeg)
+            ChatAttachmentCache.saveThumbnail(userId: userId, id: localId, jpegData: jpeg)
+            migrated.append(ChatMessageAttachment(id: localId, remoteId: nil))
+            try? FileManager.default.removeItem(at: url)
+        }
+        return migrated
     }
 }
 
-/// 会话落盘清单：文字进 JSON，图片用旁路文件名引用。
+/// 会话落盘清单：只存文字 + 附件 id 引用。
 private struct PersistedChatMessage: Codable, Equatable {
     let id: Int
     let kind: ChatMessageKind
     let text: String
     let pending: Bool
-    let attachmentFiles: [String]
+    let attachments: [PersistedAttachmentRef]?
+    /// 旧版：旁路大图文件名。
+    let attachmentFiles: [String]?
 
-    init(id: Int, kind: ChatMessageKind, text: String, pending: Bool, attachmentFiles: [String]) {
+    init(
+        id: Int,
+        kind: ChatMessageKind,
+        text: String,
+        pending: Bool,
+        attachments: [PersistedAttachmentRef]
+    ) {
         self.id = id
         self.kind = kind
         self.text = text
         self.pending = pending
-        self.attachmentFiles = attachmentFiles
+        self.attachments = attachments
+        self.attachmentFiles = nil
     }
 
     init(from decoder: Decoder) throws {
@@ -226,6 +238,12 @@ private struct PersistedChatMessage: Codable, Equatable {
         kind = try container.decode(ChatMessageKind.self, forKey: .kind)
         text = try container.decode(String.self, forKey: .text)
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
-        attachmentFiles = try container.decodeIfPresent([String].self, forKey: .attachmentFiles) ?? []
+        attachments = try container.decodeIfPresent([PersistedAttachmentRef].self, forKey: .attachments)
+        attachmentFiles = try container.decodeIfPresent([String].self, forKey: .attachmentFiles)
     }
+}
+
+private struct PersistedAttachmentRef: Codable, Equatable {
+    let id: String
+    let remoteId: String?
 }

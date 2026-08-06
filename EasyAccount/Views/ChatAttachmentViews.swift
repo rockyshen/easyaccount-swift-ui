@@ -7,8 +7,12 @@ import UIKit
 
 enum ChatAttachmentLimits {
     static let maxCount = 9
+    /// 上传 / 本地原图缓存最长边。
     static let maxPixel: CGFloat = 1600
     static let jpegQuality: CGFloat = 0.78
+    /// 对话列表缩略图（仅本地磁盘缓存，不进 messages 内存）。
+    static let thumbnailMaxPixel: CGFloat = 256
+    static let thumbnailJpegQuality: CGFloat = 0.72
 }
 
 /// PhotosPicker → UIImage（Data 直接 Transferable 在部分系统上不稳定）。

@@ -32,7 +32,8 @@
 
 - 本期不做「文件」（PDF/文档等）上传；契约可预留 `kind`  
 - 不要求把图片字节塞进 SSE 事件  
-- 不要求历史消息永久存原图（TTL / 对象存储策略由后端自定，见 §6）  
+- 历史回看所需的原图/缩略图下载与长期保留，见后续文档  
+  `docs/chat-attachments-media-access-backend-handoff.md`（**待后端实现**）  
 - 不改变鉴权方式（仍为 `Authorization: Bearer`）
 
 ---
@@ -93,7 +94,8 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `POST` | `/api/chat/attachments` | 上传单个附件（multipart） |
-| `GET` | `/api/chat/attachments/{id}` | 可选：查询元数据 / 重定向到可读 URL |
+| `GET` | `/api/chat/attachments/{id}` | 元数据（建议必做；见媒体访问交接稿） |
+| `GET` | `/api/chat/attachments/{id}/content` | **新增**：缩略图/原图像素下载（见媒体访问交接稿） |
 | `DELETE` | `/api/chat/attachments/{id}` | 可选：用户删除待命图时清理（未开聊） |
 | `POST` | `/api/chat` | **扩展**：JSON 增加 `attachmentIds`（SSE 不变） |
 
@@ -288,7 +290,7 @@ curl -sS -N -X POST "$BASE/api/chat" \
 | `ChatOutbound` | `{ content, attachmentIds? }` |
 | `ChatAttachmentService` | ✅ multipart 字段 `file` + `kind` |
 | `ChatSSEClient.stream` | ✅ 先 upload 再开 SSE；允许空 content + 附件 |
-| 用户气泡图 | 本地 `attachmentJPEGs`（不持久化） |
+| 用户气泡图 | 本地缩略图缓存 + 附件 `remoteId`；点按按需拉原图（见媒体访问交接稿） |
 
 ---
 

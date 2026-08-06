@@ -8,6 +8,19 @@ enum ChatMessageKind: String, Equatable, Codable {
     case error
 }
 
+/// 用户消息上的附件引用：内存只挂 id；缩略图/原图走磁盘缓存或服务端。
+struct ChatMessageAttachment: Identifiable, Equatable, Codable {
+    /// 本地稳定键；上传成功后通常与 `remoteId` 相同。
+    let id: String
+    /// 服务端 `attachmentId`；未上传完成前为 nil。
+    var remoteId: String?
+
+    var hasRemote: Bool {
+        guard let remoteId else { return false }
+        return !remoteId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 struct ChatMessage: Identifiable, Equatable, Codable {
     let id: Int
     var kind: ChatMessageKind
@@ -15,8 +28,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var streaming: Bool = false
     /// 已展示在对话中，等待上一轮 SSE 结束后再真正发往服务端。
     var pending: Bool = false
-    /// 本地附件 JPEG（气泡缩略图）；SessionStore 旁路落盘，重启后回填。
-    var attachmentJPEGs: [Data] = []
+    /// 附件引用（不含图片字节）。
+    var attachments: [ChatMessageAttachment] = []
 
     enum CodingKeys: String, CodingKey {
         case id, kind, text, streaming, pending
@@ -28,24 +41,23 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         text: String,
         streaming: Bool = false,
         pending: Bool = false,
-        attachmentJPEGs: [Data] = []
+        attachments: [ChatMessageAttachment] = []
     ) {
         self.id = id
         self.kind = kind
         self.text = text
         self.streaming = streaming
         self.pending = pending
-        self.attachmentJPEGs = attachmentJPEGs
+        self.attachments = attachments
     }
 
-    /// 附件 Data 不参与字节级相等判断，避免大图导致 diff 过重 / 列表异常刷新。
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
         lhs.id == rhs.id
             && lhs.kind == rhs.kind
             && lhs.text == rhs.text
             && lhs.streaming == rhs.streaming
             && lhs.pending == rhs.pending
-            && lhs.attachmentJPEGs.count == rhs.attachmentJPEGs.count
+            && lhs.attachments == rhs.attachments
     }
 
     init(from decoder: Decoder) throws {
@@ -55,8 +67,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         text = try container.decode(String.self, forKey: .text)
         streaming = try container.decodeIfPresent(Bool.self, forKey: .streaming) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
-        // 旧 UserDefaults JSON 无附件字段；磁盘回填见 SessionStore。
-        attachmentJPEGs = []
+        // 附件清单由 SessionStore 磁盘清单回填。
+        attachments = []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -222,7 +234,21 @@ struct ChatAttachmentDTO: Decodable, Equatable {
     let sizeBytes: Int?
     let width: Int?
     let height: Int?
+    /// 原图可读 URL（可选；优先走 `/content` 接口）。
     let url: String?
+    /// 缩略图可读 URL（可选；列表侧以本地缓存为主）。
+    let thumbnailUrl: String?
     let expiresAt: String?
     let createdAt: String?
+}
+
+enum ChatAttachmentContentVariant: String {
+    case thumbnail
+    case original
+}
+
+/// 上传用：本地缓存键 + JPEG 字节（仅发送链路短暂持有）。
+struct ChatUploadAttachment: Equatable {
+    let localId: String
+    let jpegData: Data
 }
