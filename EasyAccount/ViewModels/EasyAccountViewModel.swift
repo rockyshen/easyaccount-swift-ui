@@ -282,17 +282,104 @@ final class EasyAccountViewModel: ObservableObject {
 
     func sendChat() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jpegs = draftAttachments.compactMap { $0.image.chatAttachmentJPEG() }
-        guard !text.isEmpty || !jpegs.isEmpty else { return }
+        let prepared = prepareOutboundAttachments(from: draftAttachments)
+        guard !text.isEmpty || !prepared.isEmpty else { return }
         inputText = ""
         draftAttachments = []
 
-        // 纯图片允许 content 为空：先上传拿 attachmentIds，再开 SSE；气泡仍展示本地 JPEG。
+        // 纯图片允许 content 为空：先上传拿 attachmentIds，再开 SSE；气泡只挂引用 + 本地缩略图。
         if waitingReply || !pendingOutboundIds.isEmpty {
-            enqueuePending(text, attachmentJPEGs: jpegs)
+            enqueuePending(text, attachments: prepared)
             return
         }
-        dispatchOutbound(text: text, attachmentJPEGs: jpegs)
+        dispatchOutbound(text: text, attachments: prepared)
+    }
+
+    /// 对话列表缩略图：只读本地磁盘小图，不解码进 messages。
+    func thumbnailImage(for attachment: ChatMessageAttachment) -> UIImage? {
+        let userId = chatStorageUserId
+        if let image = ChatAttachmentCache.loadThumbnailImage(userId: userId, id: attachment.id) {
+            return image
+        }
+        if let remote = attachment.remoteId,
+           let image = ChatAttachmentCache.loadThumbnailImage(userId: userId, id: remote) {
+            return image
+        }
+        // 缩略图缺失时降级用本地原图缓存（迁移/异常路径）。
+        if let image = ChatAttachmentCache.loadOriginalImage(userId: userId, id: attachment.id) {
+            return image
+        }
+        if let remote = attachment.remoteId {
+            return ChatAttachmentCache.loadOriginalImage(userId: userId, id: remote)
+        }
+        return nil
+    }
+
+    /// 本地无缩略图时，按 remoteId 从服务端补拉并写回磁盘缓存。
+    func ensureThumbnailImage(for attachment: ChatMessageAttachment) async -> UIImage? {
+        if let local = thumbnailImage(for: attachment) {
+            return local
+        }
+        let remoteId = remoteAttachmentId(for: attachment)
+        guard let remoteId, !token.isEmpty else { return nil }
+
+        do {
+            let data = try await ChatAttachmentService.fetchContent(
+                httpBase: httpBase,
+                token: token,
+                attachmentId: remoteId,
+                variant: .thumbnail
+            )
+            let userId = chatStorageUserId
+            ChatAttachmentCache.saveThumbnail(userId: userId, id: remoteId, jpegData: data)
+            if attachment.id != remoteId {
+                ChatAttachmentCache.saveThumbnail(userId: userId, id: attachment.id, jpegData: data)
+            }
+            return UIImage(data: data) ?? ChatAttachmentCache.loadThumbnailImage(userId: userId, id: remoteId)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 点按预览：本地原图缓存 → 服务端 original → 缩略图兜底。
+    func loadPreviewImage(for attachment: ChatMessageAttachment) async -> UIImage? {
+        let userId = chatStorageUserId
+        if let image = ChatAttachmentCache.loadOriginalImage(userId: userId, id: attachment.id) {
+            return image
+        }
+        if let remote = attachment.remoteId,
+           let image = ChatAttachmentCache.loadOriginalImage(userId: userId, id: remote) {
+            return image
+        }
+
+        guard let remoteId = remoteAttachmentId(for: attachment), !token.isEmpty else {
+            return await ensureThumbnailImage(for: attachment) ?? thumbnailImage(for: attachment)
+        }
+
+        do {
+            let data = try await ChatAttachmentService.fetchContent(
+                httpBase: httpBase,
+                token: token,
+                attachmentId: remoteId,
+                variant: .original
+            )
+            ChatAttachmentCache.saveOriginal(userId: userId, id: remoteId, jpegData: data)
+            if ChatAttachmentCache.loadThumbnailData(userId: userId, id: remoteId) == nil {
+                ChatAttachmentCache.saveThumbnail(userId: userId, id: remoteId, jpegData: data)
+            }
+            return UIImage(data: data) ?? thumbnailImage(for: attachment)
+        } catch {
+            return await ensureThumbnailImage(for: attachment) ?? thumbnailImage(for: attachment)
+        }
+    }
+
+    private func remoteAttachmentId(for attachment: ChatMessageAttachment) -> String? {
+        let remoteId = (attachment.remoteId ?? attachment.id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remoteId.isEmpty,
+              !remoteId.hasPrefix("local_"),
+              !remoteId.hasPrefix("migrated_") else { return nil }
+        return remoteId
     }
 
     func addDraftImages(_ images: [UIImage]) {
@@ -492,11 +579,16 @@ final class EasyAccountViewModel: ObservableObject {
         stage = .live
         restoreChatMessagesIfNeeded()
         resumeIncompleteStreamIfNeeded()
+        // 后台清理超过 30 天的本地附件缓存；会话文字仍保留，缺图时按 remoteId 再拉。
+        let userId = chatStorageUserId
+        Task.detached(priority: .utility) {
+            ChatAttachmentCache.purgeExpired(userId: userId)
+        }
     }
 
     // MARK: - SSE chat
 
-    private func enqueuePending(_ text: String, attachmentJPEGs: [Data] = []) {
+    private func enqueuePending(_ text: String, attachments: [ChatMessageAttachment] = []) {
         let id = nextId()
         pushMessage(
             ChatMessage(
@@ -504,7 +596,7 @@ final class EasyAccountViewModel: ObservableObject {
                 kind: .user,
                 text: text,
                 pending: true,
-                attachmentJPEGs: attachmentJPEGs
+                attachments: attachments
             )
         )
         pendingOutboundIds.append(id)
@@ -514,7 +606,7 @@ final class EasyAccountViewModel: ObservableObject {
     private func dispatchOutbound(
         text: String,
         messageId: Int? = nil,
-        attachmentJPEGs: [Data] = []
+        attachments: [ChatMessageAttachment] = []
     ) {
         guard !token.isEmpty else {
             Task { await forceToLogin("请先登录") }
@@ -522,22 +614,26 @@ final class EasyAccountViewModel: ObservableObject {
         }
 
         let outboundId: Int
+        let messageAttachments: [ChatMessageAttachment]
         if let messageId, let idx = messages.firstIndex(where: { $0.id == messageId }) {
             messages[idx].pending = false
             outboundId = messageId
+            messageAttachments = messages[idx].attachments
         } else {
             outboundId = nextId()
+            messageAttachments = attachments
             pushMessage(
                 ChatMessage(
                     id: outboundId,
                     kind: .user,
                     text: text,
-                    attachmentJPEGs: attachmentJPEGs
+                    attachments: attachments
                 )
             )
         }
         currentOutboundMessageId = outboundId
 
+        let uploadAttachments = makeUploadAttachments(from: messageAttachments)
         beginWaitingReply(resetStreamCursor: true)
         chatGeneration += 1
         let generation = chatGeneration
@@ -547,7 +643,10 @@ final class EasyAccountViewModel: ObservableObject {
             httpBase: httpBase,
             token: token,
             content: text,
-            jpegAttachments: attachmentJPEGs,
+            uploadAttachments: uploadAttachments,
+            onUploaded: { [weak self] map in
+                self?.applyUploadedAttachmentIds(messageId: outboundId, localToRemote: map)
+            },
             onEvent: { [weak self] event in
                 guard let self, self.chatGeneration == generation else { return }
                 self.handleSSEEvent(event)
@@ -576,8 +675,52 @@ final class EasyAccountViewModel: ObservableObject {
         dispatchOutbound(
             text: message.text,
             messageId: id,
-            attachmentJPEGs: message.attachmentJPEGs
+            attachments: message.attachments
         )
+    }
+
+    /// 从待命图生成缩略图落盘 + 附件引用（大图只写磁盘，不进 messages）。
+    private func prepareOutboundAttachments(
+        from drafts: [ChatDraftAttachment]
+    ) -> [ChatMessageAttachment] {
+        let userId = chatStorageUserId
+        var result: [ChatMessageAttachment] = []
+        result.reserveCapacity(drafts.count)
+        for draft in drafts {
+            guard let jpeg = draft.image.chatAttachmentJPEG() else { continue }
+            let localId = "local_\(UUID().uuidString)"
+            ChatAttachmentCache.saveThumbnail(userId: userId, id: localId, image: draft.image)
+            ChatAttachmentCache.saveOriginal(userId: userId, id: localId, jpegData: jpeg)
+            result.append(ChatMessageAttachment(id: localId, remoteId: nil))
+        }
+        return result
+    }
+
+    private func makeUploadAttachments(
+        from attachments: [ChatMessageAttachment]
+    ) -> [ChatUploadAttachment] {
+        let userId = chatStorageUserId
+        return attachments.compactMap { item in
+            let data = ChatAttachmentCache.loadOriginalData(userId: userId, id: item.id)
+                ?? item.remoteId.flatMap { ChatAttachmentCache.loadOriginalData(userId: userId, id: $0) }
+            guard let data, !data.isEmpty else { return nil }
+            return ChatUploadAttachment(localId: item.id, jpegData: data)
+        }
+    }
+
+    private func applyUploadedAttachmentIds(messageId: Int, localToRemote: [String: String]) {
+        guard let idx = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        let userId = chatStorageUserId
+        var next = messages[idx].attachments
+        for i in next.indices {
+            let localId = next[i].id
+            guard let remote = localToRemote[localId]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !remote.isEmpty else { continue }
+            ChatAttachmentCache.rekey(userId: userId, from: localId, to: remote)
+            next[i] = ChatMessageAttachment(id: remote, remoteId: remote)
+        }
+        messages[idx].attachments = next
+        persistChatMessagesNow()
     }
 
     private func handleSSEEvent(_ event: SseChatEvent) {
@@ -1134,7 +1277,12 @@ final class EasyAccountViewModel: ObservableObject {
 
     private func pushMessage(_ message: ChatMessage) {
         messages.append(message)
-        schedulePersistChatMessages()
+        // 带附件的用户消息立即落盘，避免 350ms 防抖窗口内杀进程导致重启丢引用。
+        if !message.attachments.isEmpty {
+            persistChatMessagesNow()
+        } else {
+            schedulePersistChatMessages()
+        }
     }
 
     private func nextId() -> Int {

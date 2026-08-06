@@ -55,27 +55,30 @@ final class ChatSSEClient {
 
     /// 发起一轮对话；`onEvent` 在主线程回调。同一实例同时只允许一轮。
     /// - Parameters:
-    ///   - jpegAttachments: 本地 JPEG；发送前会逐个 `POST /api/chat/attachments`，再把 id 写入开聊请求。
+    ///   - uploadAttachments: 本地 JPEG + localId；发送前逐个上传，再把服务端 id 写入开聊请求。
+    ///   - onUploaded: localId → remoteId，便于气泡缓存改键（主线程）。
     func stream(
         httpBase: String,
         token: String,
         content: String,
-        jpegAttachments: [Data] = [],
+        uploadAttachments: [ChatUploadAttachment] = [],
+        onUploaded: (@MainActor ([String: String]) -> Void)? = nil,
         onEvent: @escaping (SseChatEvent) -> Void
     ) async throws {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !jpegAttachments.isEmpty else {
+        guard !trimmed.isEmpty || !uploadAttachments.isEmpty else {
             throw ChatSSEError.emptyContent
         }
 
         var attachmentIds: [String] = []
-        for (index, jpeg) in jpegAttachments.enumerated() {
+        var localToRemote: [String: String] = [:]
+        for (index, item) in uploadAttachments.enumerated() {
             let uploaded: ChatAttachmentDTO
             do {
                 uploaded = try await ChatAttachmentService.upload(
                     httpBase: httpBase,
                     token: token,
-                    jpegData: jpeg,
+                    jpegData: item.jpegData,
                     filename: "image-\(index + 1).jpg"
                 )
             } catch let api as APIError {
@@ -86,6 +89,10 @@ final class ChatSSEClient {
                 throw ChatSSEError.http(status: 500, message: "上传成功但未返回附件 id")
             }
             attachmentIds.append(id)
+            localToRemote[item.localId] = id
+        }
+        if !localToRemote.isEmpty {
+            await onUploaded?(localToRemote)
         }
 
         let base = APIClient.stripTrailingSlash(httpBase)
@@ -170,7 +177,8 @@ final class ChatSSEClient {
         httpBase: String,
         token: String,
         content: String,
-        jpegAttachments: [Data] = [],
+        uploadAttachments: [ChatUploadAttachment] = [],
+        onUploaded: (@MainActor ([String: String]) -> Void)? = nil,
         onEvent: @escaping (SseChatEvent) -> Void,
         onComplete: @escaping (Result<Void, ChatSSEError>) -> Void
     ) -> Task<Void, Never> {
@@ -179,7 +187,8 @@ final class ChatSSEClient {
                 httpBase: httpBase,
                 token: token,
                 content: content,
-                jpegAttachments: jpegAttachments,
+                uploadAttachments: uploadAttachments,
+                onUploaded: onUploaded,
                 onEvent: onEvent
             )
         }
