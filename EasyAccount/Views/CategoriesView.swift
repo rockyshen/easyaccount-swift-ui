@@ -33,6 +33,14 @@ final class CategoriesViewModel: ObservableObject {
         types.filter(\.isRootLevel)
     }
 
+    /// 按 handle 排序（收入→支出→转账），Tab 用真实 action.id，绝不写死 1/2/3。
+    var sortedActions: [ActionDTO] {
+        actions.sorted { lhs, rhs in
+            if lhs.handle != rhs.handle { return lhs.handle < rhs.handle }
+            return lhs.id < rhs.id
+        }
+    }
+
     /// 扁平化树，便于每行挂载滑动手势。
     var flatRows: [FlatTypeRow] {
         var rows: [FlatTypeRow] = []
@@ -49,9 +57,7 @@ final class CategoriesViewModel: ObservableObject {
     func loadActions(force: Bool = false) async {
         if !ManagementCache.actions.isEmpty {
             actions = ManagementCache.actions
-            if selectedActionId == nil {
-                selectedActionId = actions.first?.id
-            }
+            ensureValidSelectedAction()
             if let actionId = selectedActionId, let cachedTypes = ManagementCache.types(for: actionId) {
                 types = cachedTypes
             }
@@ -76,9 +82,7 @@ final class CategoriesViewModel: ObservableObject {
             let list = try await CatalogService.fetchActions(httpBase: httpBase(), token: token())
             ManagementCache.setActions(list)
             actions = list
-            if selectedActionId == nil || !(list.contains { $0.id == selectedActionId }) {
-                selectedActionId = list.first?.id
-            }
+            ensureValidSelectedAction()
             if let actionId = selectedActionId {
                 await loadTypes(actionId: actionId, force: force)
             }
@@ -93,6 +97,16 @@ final class CategoriesViewModel: ObservableObject {
                 errorMessage = "加载收支类型失败"
             }
         }
+    }
+
+    /// 切换收入/支出/转账 Tab：用 `/api/actions` 返回的真实 id 再拉 `/api/types`。
+    func selectAction(_ actionId: Int) async {
+        guard actions.contains(where: { $0.id == actionId }) else { return }
+        guard selectedActionId != actionId else { return }
+        selectedActionId = actionId
+        errorMessage = ""
+        types = ManagementCache.types(for: actionId) ?? []
+        await loadTypes(actionId: actionId, force: false)
     }
 
     func openCreate() {
@@ -205,20 +219,37 @@ final class CategoriesViewModel: ObservableObject {
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
         } catch let error as APIError {
-            if types.isEmpty {
-                errorMessage = error.message
-                types = []
-            } else {
-                onToast(error.message)
+            if selectedActionId == actionId {
+                if types.isEmpty {
+                    errorMessage = error.message
+                    types = []
+                } else {
+                    onToast(error.message)
+                }
             }
         } catch {
-            if types.isEmpty {
-                errorMessage = "加载分类失败"
-                types = []
-            } else {
-                onToast("加载分类失败")
+            if selectedActionId == actionId {
+                if types.isEmpty {
+                    errorMessage = "加载分类失败"
+                    types = []
+                } else {
+                    onToast("加载分类失败")
+                }
             }
         }
+    }
+
+    /// 默认选中排序后的第一项（通常是收入）；若当前 id 已不在列表中则重置。
+    private func ensureValidSelectedAction() {
+        let ordered = sortedActions
+        guard !ordered.isEmpty else {
+            selectedActionId = nil
+            return
+        }
+        if let selectedActionId, ordered.contains(where: { $0.id == selectedActionId }) {
+            return
+        }
+        selectedActionId = ordered.first?.id
     }
 }
 
@@ -279,71 +310,112 @@ struct CategoriesView: View {
         }
     }
 
-    @ViewBuilder
     private var typeTree: some View {
-        if vm.loadingTypes && vm.types.isEmpty {
-            CenterStatusView(text: "加载分类树…")
-        } else if vm.types.isEmpty {
-            VStack(spacing: 16) {
-                Text("暂无分类")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(EATheme.label)
+        VStack(spacing: 0) {
+            if !vm.sortedActions.isEmpty {
+                actionTabs
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+            }
+
+            Group {
+                if vm.loadingTypes && vm.types.isEmpty {
+                    CenterStatusView(text: "加载分类树…")
+                } else if !vm.errorMessage.isEmpty && vm.types.isEmpty {
+                    errorState
+                } else if vm.types.isEmpty {
+                    emptyTypesState
+                } else {
+                    typesList
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// 收入 / 支出 / 转账：标签来自 `/api/actions`，请求树时带对应真实 `actionId`。
+    private var actionTabs: some View {
+        Picker(
+            "收支类型",
+            selection: Binding(
+                get: { vm.selectedActionId },
+                set: { newValue in
+                    guard let newValue else { return }
+                    Task { await vm.selectAction(newValue) }
+                }
+            )
+        ) {
+            ForEach(vm.sortedActions) { action in
+                Text(action.displayName).tag(Optional(action.id))
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("收支类型")
+    }
+
+    private var emptyTypesState: some View {
+        VStack(spacing: 16) {
+            Text("暂无分类")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(EATheme.label)
+            Text("这些分类只属于你，可随意增删改")
+                .font(.system(size: 13))
+                .foregroundStyle(EATheme.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            Button("新建分类") { vm.openCreate() }
+                .buttonStyle(PressableButtonStyle())
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(EATheme.blue)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var typesList: some View {
+        List {
+            Section {
                 Text("这些分类只属于你，可随意增删改")
                     .font(.system(size: 13))
                     .foregroundStyle(EATheme.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                Button("新建分类") { vm.openCreate() }
-                    .buttonStyle(PressableButtonStyle())
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .background(EATheme.blue)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                Section {
-                    Text("这些分类只属于你，可随意增删改")
-                        .font(.system(size: 13))
-                        .foregroundStyle(EATheme.secondary)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-                Section {
-                    ForEach(vm.flatRows) { row in
-                        Text(row.node.tName)
-                            .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
-                            .foregroundStyle(EATheme.label)
-                            .padding(.leading, CGFloat(row.depth) * 16)
-                            .padding(.vertical, 2)
-                            .listRowBackground(EATheme.surface)
-                            .listRowSeparatorTint(EATheme.surfaceElevated)
-                            // 右划 → 编辑
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                Button {
-                                    vm.openEdit(row.node)
-                                } label: {
-                                    Label("编辑", systemImage: "pencil")
-                                }
-                                .tint(EATheme.blue)
+            Section {
+                ForEach(vm.flatRows) { row in
+                    Text(row.node.tName)
+                        .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
+                        .foregroundStyle(EATheme.label)
+                        .padding(.leading, CGFloat(row.depth) * 16)
+                        .padding(.vertical, 2)
+                        .listRowBackground(EATheme.surface)
+                        .listRowSeparatorTint(EATheme.surfaceElevated)
+                        // 右划 → 编辑
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                vm.openEdit(row.node)
+                            } label: {
+                                Label("编辑", systemImage: "pencil")
                             }
-                            // 左划 → 删除
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    Task { await vm.delete(row.node) }
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
+                            .tint(EATheme.blue)
+                        }
+                        // 左划 → 删除
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Task { await vm.delete(row.node) }
+                            } label: {
+                                Label("删除", systemImage: "trash")
                             }
-                    }
+                        }
                 }
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .refreshable { await vm.loadActions(force: true) }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .refreshable { await vm.loadActions(force: true) }
     }
 
     private var errorState: some View {

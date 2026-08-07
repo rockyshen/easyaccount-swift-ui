@@ -20,6 +20,12 @@ struct ActionDTO: Codable, Identifiable, Equatable, Sendable {
         default: return "其他"
         }
     }
+
+    /// Tab 展示名：优先后端 `hname`，勿用本地写死的 actionId。
+    var displayName: String {
+        let name = hName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? handleLabel : name
+    }
 }
 
 struct TypeNodeDTO: Codable, Identifiable, Equatable, Sendable {
