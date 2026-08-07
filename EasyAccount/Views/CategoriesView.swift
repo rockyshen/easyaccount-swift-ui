@@ -5,6 +5,8 @@ final class CategoriesViewModel: ObservableObject {
     @Published var actions: [ActionDTO] = []
     @Published var selectedActionId: Int?
     @Published var types: [TypeNodeDTO] = []
+    /// 已展开的父分类 id；默认空 = 只显示父级。
+    @Published var expandedParentIds: Set<Int> = []
     @Published var loadingActions = false
     @Published var loadingTypes = false
     @Published var saving = false
@@ -47,17 +49,44 @@ final class CategoriesViewModel: ObservableObject {
         }
     }
 
-    /// 扁平化树，便于每行挂载滑动手势。
+    /// 扁平化树：默认只出父级；展开后带出其子节点。
     var flatRows: [FlatTypeRow] {
         var rows: [FlatTypeRow] = []
-        func walk(_ nodes: [TypeNodeDTO], depth: Int) {
-            for node in nodes {
-                rows.append(FlatTypeRow(id: node.id, node: node, depth: depth))
-                walk(node.children, depth: depth + 1)
+        // `/api/types` 通常直接返回一级节点数组，childrenTypes 挂下级。
+        for node in types {
+            let hasChildren = !node.children.isEmpty
+            rows.append(
+                FlatTypeRow(
+                    id: node.id,
+                    node: node,
+                    depth: 0,
+                    hasChildren: hasChildren,
+                    isExpanded: expandedParentIds.contains(node.id)
+                )
+            )
+            if hasChildren, expandedParentIds.contains(node.id) {
+                for child in node.children {
+                    rows.append(
+                        FlatTypeRow(
+                            id: child.id,
+                            node: child,
+                            depth: 1,
+                            hasChildren: false,
+                            isExpanded: false
+                        )
+                    )
+                }
             }
         }
-        walk(types, depth: 0)
         return rows
+    }
+
+    func toggleExpanded(parentId: Int) {
+        if expandedParentIds.contains(parentId) {
+            expandedParentIds.remove(parentId)
+        } else {
+            expandedParentIds.insert(parentId)
+        }
     }
 
     func loadActions(force: Bool = false) async {
@@ -112,6 +141,7 @@ final class CategoriesViewModel: ObservableObject {
         guard selectedActionId != actionId else { return }
         selectedActionId = actionId
         errorMessage = ""
+        expandedParentIds = []
         types = ManagementCache.types(for: actionId) ?? []
         await loadTypes(actionId: actionId, force: false)
     }
@@ -201,6 +231,7 @@ final class CategoriesViewModel: ObservableObject {
     private func loadTypes(actionId: Int, force: Bool) async {
         if let cached = ManagementCache.types(for: actionId) {
             types = cached
+            pruneExpandedParents()
         }
 
         if ManagementCache.hasTypesCache(actionId: actionId, force: force) {
@@ -222,6 +253,7 @@ final class CategoriesViewModel: ObservableObject {
             ManagementCache.setTypes(list, for: actionId)
             if selectedActionId == actionId {
                 types = list
+                pruneExpandedParents()
             }
         } catch let error as APIError where error.status == 401 {
             onUnauthorized(error.message)
@@ -257,6 +289,11 @@ final class CategoriesViewModel: ObservableObject {
             return
         }
         selectedActionId = visible.first?.id
+    }
+
+    private func pruneExpandedParents() {
+        let validIds = Set(types.map(\.id))
+        expandedParentIds = expandedParentIds.intersection(validIds)
     }
 }
 
@@ -381,11 +418,7 @@ struct CategoriesView: View {
     private var typesList: some View {
         List {
             ForEach(vm.flatRows) { row in
-                Text(row.node.tName)
-                    .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
-                    .foregroundStyle(EATheme.label)
-                    .padding(.leading, CGFloat(row.depth) * 16)
-                    .padding(.vertical, 2)
+                categoryRow(row)
                     .listRowBackground(EATheme.surface)
                     .listRowSeparatorTint(EATheme.surfaceElevated)
                     // 右划 → 编辑
@@ -410,6 +443,35 @@ struct CategoriesView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .refreshable { await vm.loadActions(force: true) }
+        .animation(.easeInOut(duration: 0.18), value: vm.expandedParentIds)
+    }
+
+    private func categoryRow(_ row: FlatTypeRow) -> some View {
+        HStack(spacing: 10) {
+            if row.hasChildren {
+                Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(EATheme.tertiary)
+                    .frame(width: 14)
+            } else if row.depth > 0 {
+                Color.clear.frame(width: 14)
+            }
+
+            Text(row.node.tName)
+                .font(.system(size: 16, weight: row.depth == 0 ? .semibold : .medium))
+                .foregroundStyle(EATheme.label)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, CGFloat(row.depth) * 16)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard row.hasChildren else { return }
+            vm.toggleExpanded(parentId: row.node.id)
+        }
+        .accessibilityAddTraits(row.hasChildren ? .isButton : [])
+        .accessibilityHint(row.hasChildren ? (row.isExpanded ? "收起子分类" : "展开子分类") : "")
     }
 
     private var errorState: some View {
