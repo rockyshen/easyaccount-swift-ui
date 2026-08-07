@@ -585,9 +585,6 @@ final class EasyAccountViewModel: ObservableObject {
         showSideMenu = false
         resetChatState()
         enterLive()
-        if needsOnboarding {
-            showToast("先建一个账户才能记账，跟我说「建个微信，余额 200」也可以")
-        }
     }
 
     private func onLogout() async {
