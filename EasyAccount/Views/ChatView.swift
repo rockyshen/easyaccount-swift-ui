@@ -62,12 +62,7 @@ struct ChatView: View {
             chatHeader
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if vm.needsOnboarding {
-                    onboardingHintBar
-                }
-                composer
-            }
+            composer
         }
         .background(EATheme.background.ignoresSafeArea())
         .sheet(isPresented: $showAttachMenu) {
@@ -330,29 +325,6 @@ struct ChatView: View {
     /// 仅手指按住时展示录制 UI；松手后的续录/出最终结果在后台进行。
     private var isVoiceCaptureActive: Bool {
         isHoldPressing
-    }
-
-    /// 无账户时的轻提示（非全屏向导）；建账户后随 onboarding 刷新自动消失。
-    private var onboardingHintBar: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(EATheme.cyan)
-                .padding(.top, 2)
-            Text("先建一个账户才能记账，跟我说「建个微信，余额 200」也可以。")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(EATheme.label)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(EATheme.surfaceElevated.opacity(0.92))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(EATheme.surface)
-                .frame(height: 1)
-        }
     }
 
     private var composer: some View {
