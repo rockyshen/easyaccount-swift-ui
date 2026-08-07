@@ -107,9 +107,11 @@ struct TypeEditorState: Identifiable, Equatable {
     }
 }
 
-/// 列表展示用的扁平节点（便于每行右划/左划）。
+/// 列表展示用的扁平节点（便于每行右划/左划与折叠）。
 struct FlatTypeRow: Identifiable, Equatable {
     let id: Int
     let node: TypeNodeDTO
     let depth: Int
+    let hasChildren: Bool
+    let isExpanded: Bool
 }
