@@ -52,7 +52,8 @@ final class CategoriesViewModel: ObservableObject {
     /// 扁平化树：默认只出父级；展开后带出其子节点。
     var flatRows: [FlatTypeRow] {
         var rows: [FlatTypeRow] = []
-        for node in types where node.isRootLevel {
+        // `/api/types` 通常直接返回一级节点数组，childrenTypes 挂下级。
+        for node in types {
             let hasChildren = !node.children.isEmpty
             rows.append(
                 FlatTypeRow(
@@ -77,7 +78,6 @@ final class CategoriesViewModel: ObservableObject {
                 }
             }
         }
-        // 若后端偶发未标 parent 但仍挂在根数组，保持兼容：非根且无父展示的节点不单独列出。
         return rows
     }
 
@@ -292,7 +292,7 @@ final class CategoriesViewModel: ObservableObject {
     }
 
     private func pruneExpandedParents() {
-        let validIds = Set(types.filter(\.isRootLevel).map(\.id))
+        let validIds = Set(types.map(\.id))
         expandedParentIds = expandedParentIds.intersection(validIds)
     }
 }
