@@ -20,6 +20,23 @@ struct ActionDTO: Codable, Identifiable, Equatable, Sendable {
         default: return "其他"
         }
     }
+
+    /// Tab 展示名：优先后端 `hname`，勿用本地写死的 actionId。
+    var displayName: String {
+        let name = hName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? handleLabel : name
+    }
+
+    var normalizedName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Tab 上展示的短名（内部转账相关统一文案）。
+    var primaryTabTitle: String {
+        let name = normalizedName
+        if name == "内部转账" || name.contains("内部转账") { return "内部转账" }
+        return name
+    }
 }
 
 struct TypeNodeDTO: Codable, Identifiable, Equatable, Sendable {
@@ -90,9 +107,11 @@ struct TypeEditorState: Identifiable, Equatable {
     }
 }
 
-/// 列表展示用的扁平节点（便于每行右划/左划）。
+/// 列表展示用的扁平节点（便于每行右划/左划与折叠）。
 struct FlatTypeRow: Identifiable, Equatable {
     let id: Int
     let node: TypeNodeDTO
     let depth: Int
+    let hasChildren: Bool
+    let isExpanded: Bool
 }
