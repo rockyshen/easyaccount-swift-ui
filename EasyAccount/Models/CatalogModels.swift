@@ -26,6 +26,17 @@ struct ActionDTO: Codable, Identifiable, Equatable, Sendable {
         let name = hName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? handleLabel : name
     }
+
+    var normalizedName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Tab 上展示的短名（内部转账相关统一文案）。
+    var primaryTabTitle: String {
+        let name = normalizedName
+        if name == "内部转账" || name.contains("内部转账") { return "内部转账" }
+        return name
+    }
 }
 
 struct TypeNodeDTO: Codable, Identifiable, Equatable, Sendable {
